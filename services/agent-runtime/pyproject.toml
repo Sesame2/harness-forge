@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Breezy", email = "923803814@qq.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "anyio>=4.14.2",
     "fastapi>=0.139.2",
