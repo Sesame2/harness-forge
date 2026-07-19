@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -23,7 +24,8 @@ func TestHealth(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := body["status"]; got != "ok" {
-		t.Fatalf("status field = %#v, want %q", got, "ok")
+	want := map[string]any{"status": "ok"}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("response body = %#v, want %#v", body, want)
 	}
 }
