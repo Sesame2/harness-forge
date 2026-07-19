@@ -260,9 +260,6 @@ func ValidateRuntimeEventSequence(events []RuntimeEvent) error {
 			lastCandidate = payload.Artifacts
 			sawCandidate = true
 		case AgentCompletedPayload:
-			if len(payload.Artifacts) == 0 && !sawCandidate {
-				continue
-			}
 			if !sawCandidate || !reflect.DeepEqual(lastCandidate, payload.Artifacts) {
 				return errors.New("agent.completed artifacts must match the last artifact.candidate")
 			}

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 class ContractModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class RuntimeProfile(ContractModel):
@@ -107,6 +107,15 @@ class ToolCompletedPayload(ContractModel):
     output: str | None = None
     error: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_explicit_null_optionals(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            for field_name in ("output", "error"):
+                if field_name in value and value[field_name] is None:
+                    raise ValueError(f"{field_name} must be a string when present")
+        return value
+
     @model_validator(mode="after")
     def failed_outcome_requires_error(self) -> ToolCompletedPayload:
         if self.outcome == "failed" and self.error is None:
@@ -157,8 +166,15 @@ class RuntimeEvent(ContractModel):
     run_id: UUID
     sequence: int = Field(ge=0)
     type: str = Field(min_length=1)
-    occurred_at: datetime
-    payload: KnownPayload | dict[str, Any]
+    occurred_at: datetime = Field(strict=False)
+    payload: object
+
+    @field_validator("occurred_at", mode="before")
+    @classmethod
+    def require_json_datetime_string(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            raise ValueError("occurred_at must be a JSON date-time string")
+        return value
 
     @model_validator(mode="before")
     @classmethod

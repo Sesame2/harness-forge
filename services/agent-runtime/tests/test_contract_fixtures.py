@@ -99,6 +99,23 @@ def test_unknown_event_fixture_is_parseable_but_not_terminal() -> None:
     assert not is_terminal_event(event)
 
 
+def test_unknown_event_payload_that_matches_known_shape_stays_generic() -> None:
+    unknown_event_fixture = json.dumps(
+        {
+            "version": "1",
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "sequence": 10,
+            "type": "phase.previewed",
+            "occurred_at": "2026-07-19T00:00:09Z",
+            "payload": {"phase": "agent"},
+        }
+    )
+    event = RuntimeEvent.model_validate_json(unknown_event_fixture)
+    assert type(event.payload) is dict
+    assert event.payload == {"phase": "agent"}
+    assert not is_terminal_event(event)
+
+
 def test_only_known_completion_and_failure_events_are_terminal() -> None:
     lines = (FIXTURES / "runtime-events.ndjson").read_text().splitlines()
     events = [RuntimeEvent.model_validate_json(line) for line in lines]
@@ -106,6 +123,33 @@ def test_only_known_completion_and_failure_events_are_terminal() -> None:
         "agent.failed",
         "agent.completed",
     ]
+
+
+@pytest.mark.parametrize(
+    ("event_type", "field_path", "invalid_value"),
+    [
+        ("phase.changed", ("sequence",), "1"),
+        ("agent.failed", ("payload", "retryable"), 1),
+        ("artifact.candidate", ("payload", "artifacts", 0, "primary"), 1),
+        ("tool.completed", ("payload", "output"), None),
+        ("tool.completed", ("payload", "error"), None),
+    ],
+)
+def test_runtime_event_rejects_json_type_coercion_and_explicit_null_optionals(
+    event_type: str, field_path: tuple[str | int, ...], invalid_value: object
+) -> None:
+    documents = [
+        json.loads(line)
+        for line in (FIXTURES / "runtime-events.ndjson").read_text().splitlines()
+    ]
+    document = next(item for item in documents if item["type"] == event_type)
+    target: object = document
+    for segment in field_path[:-1]:
+        target = target[segment]  # type: ignore[index]
+    target[field_path[-1]] = invalid_value  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        RuntimeEvent.model_validate_json(json.dumps(document))
 
 
 @pytest.mark.parametrize(

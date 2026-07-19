@@ -169,6 +169,19 @@ func TestRuntimeEventSequenceRejectsInvalidArtifactFinalization(t *testing.T) {
 	require.Error(t, ValidateRuntimeEventSequence(events))
 }
 
+func TestRuntimeEventSequenceRejectsCompletedWithoutArtifactCandidate(t *testing.T) {
+	events := []RuntimeEvent{
+		{
+			Type: "agent.completed",
+			Payload: AgentCompletedPayload{
+				CandidateSDKSessionID: "sdk-session-2",
+				Artifacts:             []ArtifactCandidate{},
+			},
+		},
+	}
+	require.Error(t, ValidateRuntimeEventSequence(events))
+}
+
 func TestArtifactManifestFixture(t *testing.T) {
 	data := fixture(t, "artifact-manifest.json")
 	schema := compileSchema(t, contractPath(t, "artifacts/v1/artifact-manifest.schema.json"))
@@ -295,12 +308,15 @@ func TestControlPlaneOpenAPI(t *testing.T) {
 	runs := doc.Paths.Find("/api/v1/conversations/{conversation_id}/runs").Get
 	require.Contains(t, strings.ToLower(runs.Description), "created_at")
 	require.Contains(t, strings.ToLower(runs.Description), "ascending")
+	events := doc.Paths.Find("/api/v1/runs/{run_id}/events").Get
+	assertOptionalUint64Parameter(t, findParameter(events, "query", "after_sequence"))
 	sse := doc.Paths.Find("/api/v1/runs/{run_id}/events/stream").Get
 	require.Contains(t, sse.Description, "Last-Event-ID")
 	require.Contains(t, strings.ToLower(sse.Description), "priority")
 	require.Contains(t, strings.ToLower(sse.Description), "durable sequence")
-	require.NotNil(t, findParameter(sse, "query", "after_sequence"))
-	require.NotNil(t, findParameter(sse, "header", "Last-Event-ID"))
+	assertOptionalUint64Parameter(t, findParameter(sse, "query", "after_sequence"))
+	lastEventID := findParameter(sse, "header", "Last-Event-ID")
+	assertOptionalUint64Parameter(t, lastEventID)
 }
 
 func findParameter(operation *openapi3.Operation, in, name string) *openapi3.Parameter {
@@ -310,6 +326,15 @@ func findParameter(operation *openapi3.Operation, in, name string) *openapi3.Par
 		}
 	}
 	return nil
+}
+
+func assertOptionalUint64Parameter(t *testing.T, parameter *openapi3.Parameter) {
+	t.Helper()
+	require.NotNil(t, parameter)
+	require.False(t, parameter.Required)
+	require.NotNil(t, parameter.Schema)
+	require.True(t, parameter.Schema.Value.Type.Is("integer"))
+	require.Equal(t, "uint64", parameter.Schema.Value.Format)
 }
 
 func TestOpenAPIComponentsAreClosedRequiredAndNullable(t *testing.T) {
@@ -370,6 +395,8 @@ func TestOpenAPIComponentsAreClosedRequiredAndNullable(t *testing.T) {
 	runError := doc.Components.Schemas["Run"].Value.Properties["error"].Value
 	require.Len(t, runError.AnyOf, 2)
 	require.Equal(t, "#/components/schemas/Error", runError.AnyOf[0].Ref)
+	require.NotNil(t, runError.AnyOf[1].Value)
+	require.True(t, runError.AnyOf[1].Value.Type.Is("null"))
 
 	result := doc.Components.Schemas["SubmitMessageResult"].Value
 	require.Equal(t, "#/components/schemas/Message", result.Properties["message"].Ref)
