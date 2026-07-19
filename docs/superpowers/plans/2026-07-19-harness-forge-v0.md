@@ -4,7 +4,7 @@
 
 **Goal:** 在 2–4 周内交付本机单用户的 Harness Forge V0，跑通“上传 CSV → 多会话对话 → Claude Agent SDK 地理分析 → 不可变 HTML/ECharts 制品”的完整链路。
 
-**Architecture:** Vue 3 Web 通过 REST/SSE 调用 Go 模块化单体；Go 以 PostgreSQL 为产品状态权威、以 MinIO 保存输入和制品，并通过版本化 NDJSON 协议调用常驻 Python Runtime。Runtime 每个 Run 启动一个 worker，使用 Claude SDK Session fork，并通过 commit/abort finalize 协议与 Go 协调。
+**Architecture:** Vue 3 Web 通过 REST/SSE 调用 Go 模块化单体；Go 以 PostgreSQL 为产品状态权威、以 MinIO 保存输入和制品，并通过全局选择的 `SandboxProvider` 获取 Run-scoped Lease。Lease 内部使用版本化 HTTP/NDJSON 协议调用 Python Runtime；V0 提供 Docker 与 Fake Provider，未来 E2B 只需增加 adapter，不改变 Run Coordinator、Runtime 协议或 Artifact 发布链路。
 
 **Tech Stack:** Go 1.25、chi、pgx、MinIO Go SDK、Vue 3、TypeScript、Vite、Pinia、Vitest、Playwright、Python 3.12、FastAPI、Pydantic、Claude Agent SDK、PostgreSQL、MinIO、Docker Compose。
 
@@ -25,7 +25,8 @@
 |---|---|
 | `contracts/` | 浏览器、Go 与 Python 之间的稳定协议 |
 | `services/control-plane/internal/runs` | Run 状态机、队列和 finalization 规则 |
-| `services/control-plane/internal/agentexec` | HTTP Runtime 与 Fake Runtime 的唯一 seam |
+| `services/control-plane/internal/agentexec` | 稳定的 Runtime HTTP/NDJSON 协议与 client；不知道 Docker/E2B |
+| `services/control-plane/internal/sandbox` | Run 执行环境的 Acquire/Recover/List 与 Lease；V0 的 Docker/Fake adapter |
 | `services/control-plane/internal/artifacts` | Manifest 接受、对象发布与元数据可见性 |
 | `services/agent-runtime/.../api.py` | Runtime 私有 HTTP 接口与单并发门禁 |
 | `services/agent-runtime/.../execution_store.py` | execution record、tombstone 与幂等 disposition |
@@ -330,7 +331,7 @@ git commit -m "feat: define versioned Harness contracts"
 
 - [ ] **Step 1: 写配置和三个 health 失败测试**
 
-- Go 配置测试使用注入的 `getenv`，覆盖：完整变量映射、`HTTP_ADDR=:8080`/`ARTIFACT_ADDR=:8081` 默认值、缺少 `DATABASE_URL`/MinIO 凭证的具名错误、非法 `WEB_ORIGIN` URL。
+- Go 配置测试使用注入的 `getenv`，覆盖：完整变量映射、`HTTP_ADDR=:8080`/`ARTIFACT_ADDR=:8081` 默认值、`SANDBOX_PROVIDER=docker|fake`（默认 `docker`）、Docker 模式缺少 `RUNTIME_URL`、缺少 `DATABASE_URL`/MinIO 凭证的具名错误、非法 `WEB_ORIGIN` URL。不得接受尚未实现的 `e2b` 值。
 - Go `GET /health` 期望 `200 {"status":"ok"}`。
 - Python `GET /health` 期望 `200 {"status":"ok","active_run_id":null}`。
 - Web `loadHealth()` 固定请求同源 `/health`，对非 2xx 抛出带 status 的错误；测试断言请求 URL。
@@ -345,7 +346,7 @@ cd ../../apps/web && pnpm test -- --run src/app/health.test.ts
 
 - [ ] **Step 3: 实现配置、handler 与 Compose**
 
-Go 使用 `ConfigFromEnv(getenv func(string) string) (Config, error)`，字段固定为 `HTTPAddr`、`ArtifactAddr`、`DatabaseURL`、`MinIOEndpoint`、`MinIOAccessKey`、`MinIOSecretKey`、`MinIOBucket`、`RuntimeURL`、`WebOrigin`。`httpapi.NewRouter()` 注册 `/health`，`main.go` 加载配置并在 `HTTPAddr` 启动 HTTP server。Python 使用 FastAPI application factory，容器入口固定为：
+Go 使用 `ConfigFromEnv(getenv func(string) string) (Config, error)`，字段固定为 `HTTPAddr`、`ArtifactAddr`、`DatabaseURL`、`MinIOEndpoint`、`MinIOAccessKey`、`MinIOSecretKey`、`MinIOBucket`、`SandboxProvider`、`RuntimeURL`、`WorkspaceRoot`、`WebOrigin`。`WorkspaceRoot` 默认 `/workspaces`；`RuntimeURL` 是 Docker Provider 专属配置，不得传入 Run Coordinator。`httpapi.NewRouter()` 注册 `/health`，`main.go` 加载配置并在 `HTTPAddr` 启动 HTTP server。Python 使用 FastAPI application factory，容器入口固定为：
 
 ```bash
 uv run uvicorn harness_forge_runtime.api:create_app --factory --host 0.0.0.0 --port 8090
@@ -380,10 +381,10 @@ mc mb --ignore-existing "local/$MINIO_BUCKET"
 | minio | `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001` | 9000, 9001 | 两个 `MINIO_ROOT_*` | `minio-data`; `curl /minio/health/live` |
 | minio-init | `quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z` + script | — | root credentials + bucket | depends MinIO healthy; bind script read-only; restart `no` |
 | agent-runtime | local Dockerfile | 8090 | `ANTHROPIC_*`, workspace/session roots | `run-workspaces:/workspaces`, `runtime-sessions:/sessions`; HTTP health |
-| control-plane | local Dockerfile | 8080, 8081 | `DATABASE_URL`, all MinIO client values, `RUNTIME_URL`, `WEB_ORIGIN` | shared workspaces; waits Postgres healthy + minio-init completed; HTTP health |
+| control-plane | local Dockerfile | 8080, 8081 | `DATABASE_URL`, all MinIO client values, `SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-docker}`, `RUNTIME_URL`, `WORKSPACE_ROOT`, `WEB_ORIGIN` | shared workspaces; waits Postgres healthy + minio-init completed; HTTP health |
 | web | local Dockerfile | 5173 | none | waits Go healthy; `wget http://localhost:5173/` |
 
-`.env.example` 补全 `DATABASE_URL`、`MINIO_ENDPOINT`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`、`RUNTIME_URL`、`WEB_ORIGIN`。只有 Runtime 接收 Claude 变量；只有 Go 接收 PostgreSQL/MinIO 变量。命名 volumes 为 `postgres-data`、`minio-data`、`run-workspaces`、`runtime-sessions`。
+`.env.example` 补全 `DATABASE_URL`、`MINIO_ENDPOINT`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`、`SANDBOX_PROVIDER=docker`、`RUNTIME_URL`、`WORKSPACE_ROOT=/workspaces`、`WEB_ORIGIN`。Compose 必须用 `${SANDBOX_PROVIDER:-docker}` 插值而不是固定字面值，允许测试显式覆盖为 Fake。只有 Runtime 接收 Claude 变量；只有 Go 接收 PostgreSQL/MinIO 变量。命名 volumes 为 `postgres-data`、`minio-data`、`run-workspaces`、`runtime-sessions`。
 
 - [ ] **Step 4: 验证并提交服务拓扑**
 
@@ -423,7 +424,7 @@ Expected: Go、Runtime 及经 Web 同源代理访问的 health 均返回 `status
 
 - `projects`、`input_files`、`conversations`、`messages`、`runs`、`run_events`、`artifacts` 七张表存在；
 - 所有父子关系有外键，Project/Conversation 有 `deleted_at`；
-- Run 有 `status`、`phase`、`finalized_at`、source/candidate SDK Session ID；
+- Run 有 `status`、`phase`、`finalized_at`、source/candidate SDK Session ID、nullable `sandbox_provider`/`sandbox_ref`；`sandbox_ref` 非空时 provider 必须非空，provider 非空/ref 为空合法并表示 Acquire 尚未确认；
 - Run status/phase 有 CHECK，`run_events(run_id, sequence)` 唯一；
 - 待运行队列存在以 `status, created_at` 开头的 FIFO 索引。
 
@@ -540,7 +541,7 @@ git commit -m "feat: manage projects and input files"
 
 - [ ] **Step 1: 将终态矩阵写成失败的表驱动单元测试**
 
-每个 case 明确 initial status/phase、Runtime disposition、expected status 和 expected finalized；完整覆盖 queued cancel、prepare fail、agent fail、publish fail、active cancel、restart interrupt、success commit，以及所有非法转换。
+每个 case 明确 initial status/phase、是否已 Acquire Lease、Runtime disposition、Sandbox release acknowledgement、expected status 和 expected finalized；完整覆盖 queued cancel、prepare fail、Acquire 明确未创建 Lease、Acquire 结果不确定、Lease 已获取但 execute 未创建 Runtime state、agent fail、publish fail、active cancel、restart interrupt、success commit、Runtime 已 finalize 但 release 失败，以及所有非法转换。只要 Run 曾 Acquire Lease，`finalized_at` 就必须同时要求 Runtime disposition（若创建过 execution）与 Release 成功。
 
 - [ ] **Step 2: 运行纯状态测试，确认红灯后实现**
 
@@ -548,11 +549,11 @@ git commit -m "feat: manage projects and input files"
 go -C services/control-plane test ./internal/runs -run 'Transition|Finalization' -v
 ```
 
-实现无数据库副作用的转换函数；返回新 Run 值和 typed domain error。`finalized_at` 只能由规格矩阵允许的 acknowledgement/无 Runtime state 路径设置。重跑并确认通过。
+实现无数据库副作用的转换函数；返回新 Run 值和 typed domain error。内部 Run model 包含 nullable `SandboxProvider`/`SandboxRef`，但 API mapper 不向浏览器暴露 ref。`finalized_at` 只能由规格矩阵允许的 Runtime acknowledgement + Sandbox release，或从未 Acquire 的路径设置。重跑并确认通过。
 
 - [ ] **Step 3: 写数据库队列/Event 失败测试并确认红灯**
 
-`store_integration_test.go` 首行为 `//go:build integration`。覆盖：两个连接并发 claim 时全局只领取一个 Run；存在 status 非 queued 且未 finalized 的当前 Run 时不领取；等待中的 queued Runs 不触发该阻断条件；`CreateQueuedTx` 可加入调用方事务；Event durable sequence 严格递增；重复 `(run_id,runtime_sequence)` 幂等返回既有 Event。
+`store_integration_test.go` 首行为 `//go:build integration`。覆盖：两个连接并发 claim 时全局只领取一个 Run；存在 status 非 queued 且未 finalized 的当前 Run 时不领取；等待中的 queued Runs 不触发该阻断条件；`CreateQueuedTx` 可加入调用方事务；`BeginSandboxAcquire(run_id, provider)` 在外部调用前幂等记录 provider，`AttachSandboxRef(run_id, provider, ref)` 随后补 ref，相同值幂等、provider/ref 冲突拒绝；Event durable sequence 严格递增；重复 `(run_id,runtime_sequence)` 幂等返回既有 Event。
 
 ```bash
 docker compose -f docker-compose.yaml up -d --wait postgres
@@ -617,7 +618,7 @@ git diff --cached --check
 git commit -m "feat: add project conversations and messages"
 ```
 
-### Task 8：实现 Runtime seam、Fake Runtime 与 SSE
+### Task 8：实现 Runtime 协议、SandboxProvider 与 SSE
 
 **Files:**
 - Modify: `.env.example`
@@ -626,9 +627,18 @@ git commit -m "feat: add project conversations and messages"
 - Modify: `services/control-plane/internal/config/config.go`
 - Modify: `services/control-plane/internal/config/config_test.go`
 - Create: `services/control-plane/internal/agentexec/executor.go`
+- Create: `services/control-plane/internal/agentexec/paths.go`
 - Create: `services/control-plane/internal/agentexec/http.go`
 - Create: `services/control-plane/internal/agentexec/http_test.go`
-- Create: `services/control-plane/internal/agentexec/fake.go`
+- Create: `services/control-plane/internal/sandbox/provider.go`
+- Create: `services/control-plane/internal/sandbox/errors.go`
+- Create: `services/control-plane/internal/sandbox/contract_test.go`
+- Create: `services/control-plane/internal/sandbox/docker.go`
+- Create: `services/control-plane/internal/sandbox/docker_test.go`
+- Create: `services/control-plane/internal/sandbox/fake.go`
+- Create: `services/control-plane/internal/sandbox/fake_test.go`
+- Create: `services/control-plane/internal/sandbox/factory.go`
+- Create: `services/control-plane/internal/sandbox/factory_test.go`
 - Create: `services/control-plane/internal/runs/broker.go`
 - Modify: `services/control-plane/internal/runs/store.go`
 - Modify: `services/control-plane/internal/runs/store_integration_test.go`
@@ -644,17 +654,44 @@ git commit -m "feat: add project conversations and messages"
 - Create: `tests/fixtures/fake-runtime/geo-report/outputs/artifact-manifest.json`
 - Create: `tests/fixtures/fake-runtime/geo-report/outputs/report/index.html`
 
-- [ ] **Step 1: 写完整 HTTP Runtime adapter 失败测试**
+- [ ] **Step 1: 写内层 HTTP Runtime adapter 失败测试**
 
-使用 `httptest.Server` 验证 Execute request 包含 Profile snapshot、source Session 与绝对路径；逐行解析 typed event；非 2xx 转 typed Runtime error。逐一覆盖 `Cancel`、幂等 `Finalize`、`ListExecutions` active/unfinalized 解析、`SessionExists` 的 200/404/异常、`DeleteExecution` 和 `DeleteSession`。
+使用 `httptest.Server` 验证 Execute request 包含 Profile snapshot、source Session 与绝对路径；逐行解析 typed event；确定性的非 2xx 转 typed Runtime error。覆盖 request 可能已被接受但 response header 丢失时返回 `ErrOutcomeUnknown`；重复 execute 的 `409 already_running`、`409 awaiting_finalize` 与 finalized disposition 都不被当作可重新执行。逐一覆盖 `Cancel`、幂等 `Finalize`、`ListExecutions` starting/active/awaiting-finalize 解析、`SessionExists` 的 200/404/异常、`DeleteExecution` 和 `DeleteSession`。
 
-配置测试新增 `RUNTIME_MODE` 只允许 `http|fake`，默认 `http`；Fake 测试除流式发 event 外，还必须把 fixture `outputs/` 递归复制到 ExecuteRequest 的本次 Run output path，复制失败返回 execution error，保证后续 Manifest/Artifact 链路使用真实文件。
+`agentexec` 只定义 Runtime HTTP/NDJSON 协议，不读取环境变量、不创建 Sandbox、不映射宿主机路径，也不包含 Fake adapter。`agentexec.Paths` 固定为 Runtime 可见的三个绝对路径：
 
-Run: `go -C services/control-plane test ./internal/config ./internal/agentexec -run 'Runtime|Executor|Fake' -v`
+```go
+type Paths struct {
+    Inputs    string
+    Workspace string
+    Outputs   string
+}
+```
 
-Expected: FAIL，Executor/adapter/config 字段尚不存在。
+Run: `go -C services/control-plane test ./internal/agentexec -run 'Runtime|Executor' -v`
 
-- [ ] **Step 2: 写 Run API、取消和无缝 SSE 失败测试**
+Expected: FAIL，Executor/HTTP adapter 尚不存在。
+
+- [ ] **Step 2: 写 SandboxProvider contract 与 factory 失败测试**
+
+contract suite 同时运行 Docker 与 Fake harness，覆盖以下不变量：
+
+- `Acquire(run_id)` 重复调用返回同一 `Ref`，不创建第二个逻辑环境；
+- `Recover(run_id, ref)` 只打开既有环境，错误 ref 返回 `ErrNotFound`，不会调用 create；
+- `List` 权威返回本 Provider 已物化、需要协调的全部外部资源 `run_id/ref`；测试 harness 覆盖 Acquire 已创建远端资源但 acknowledgement 丢失、尚未 execute 的情形。Docker Acquire 不创建每 Run 外部资源，因此不要求它在 Runtime record 出现前虚构 List 条目；
+- `Paths` 返回 Runtime 可见绝对路径，且不允许 Run Coordinator 参与路径拼接；
+- Docker/Fake 的 `SyncBack` 都是可重复 no-op，调用不会再次复制或修改文件；`Release` 可重复且第二次仍成功；
+- Fake 的未导出 Executor 必须在发出 `agent.completed` 前把 fixture `outputs/` 复制到本地 Run output path，复制失败返回 execution error且不发 completed；复制职责不放进 `SyncBack`。
+
+Docker 测试使用 `httptest.Server` 作为 Runtime，不真正启动容器；它断言 ref 固定为 `docker:agent-runtime`，本地 `{root}/{run_id}/{inputs,workspace,outputs}` 映射为 `/workspaces/{run_id}/...`。Fake ref 固定为 `fake:{run_id}`，路径保持本地绝对路径。Provider 错误至少可用 `errors.Is` 区分 `ErrNotFound`、`ErrUnavailable`、`ErrConflict`、`ErrOutcomeUnknown`，并携带 operation/provider/run correlation，不暴露凭证。Acquire 在确认请求未创建资源时返回普通 definite error；只有“可能已创建但 acknowledgement 丢失”才同时匹配 `ErrOutcomeUnknown`，Coordinator 据此决定不能立即 finalized。
+
+配置/factory 测试要求 `SANDBOX_PROVIDER` 只接受 `docker|fake`、默认 `docker`；Docker 缺 `RUNTIME_URL` 失败，Fake 不要求 Runtime URL；明确断言 `e2b` 返回 `unsupported sandbox provider`，V0 不导入 E2B SDK、不创建 `e2b.go` 空壳。
+
+Run: `go -C services/control-plane test ./internal/config ./internal/sandbox -run 'Provider|Lease|Factory|Contract' -v`
+
+Expected: FAIL，Provider/Lease/factory 尚不存在。
+
+- [ ] **Step 3: 写 Run API、取消和无缝 SSE 失败测试**
 
 单元/HTTP 测试覆盖 `GET /conversations/{id}/runs`；integration test 使用两个 Conversation 的交错 Run，断言只返回目标归属且严格 `created_at,id` 升序，不存在 Conversation 404。另覆盖 `GET /runs/{id}` 与 `POST /cancel`：queued 在单一 DB transaction 内设 cancelled+finalized；agent phase 先 Runtime cancel 后等待 Coordinator finalize abort；publishing 返回 409。预置 sequence 1–3，`Last-Event-ID: 1` 只返回 2–3；frame `id` 等于 durable sequence；浏览器断开不触发 cancel。
 
@@ -666,7 +703,7 @@ Run: `TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/
 
 Expected: FAIL，broker/cancellation/handlers 尚不存在。
 
-- [ ] **Step 3: 实现最小 Executor interface**
+- [ ] **Step 4: 实现两个深接口**
 
 ```go
 type Executor interface {
@@ -678,26 +715,53 @@ type Executor interface {
     DeleteExecution(context.Context, RunID) error
     DeleteSession(context.Context, SessionID) error
 }
+
+type Provider interface {
+    Acquire(context.Context, AcquireRequest) (Lease, error)
+    Recover(context.Context, RecoverRequest) (Lease, error)
+    List(context.Context) ([]LeaseInfo, error)
+}
+
+type Lease interface {
+    Ref() string
+    Runtime() agentexec.Executor
+    Paths() agentexec.Paths
+    SyncBack(context.Context) error
+    Release(context.Context) error
+}
+
+type ProviderID string
+
+type Binding struct {
+    ID       ProviderID
+    Provider Provider
+}
 ```
 
-Fake adapter 从 fixture 流式发送相同 V1 event，不添加仅测试可见的业务接口。
+`ProviderID` 只允许常量 `docker`/`fake`，由 config 验证；`sandbox.NewProvider(config)` 返回不可拆配的 `Binding`。Composition root 将同一个 `Binding.ID` 与 `Binding.Provider` 注入 Coordinator、Reconciler 和 Purge；领域模块不从 Provider 实现类型、环境变量或可伪造请求值推断身份。
 
-- [ ] **Step 4: 实现 Run 路由和 cancellation service**
+`AcquireRequest` 只含 `RunID` 与 Go 已准备的本地 `agentexec.Paths`；`RecoverRequest` 含 `RunID`、`Ref`、本地 paths。`LeaseInfo` 只含 `RunID`、`Ref`。不要添加通用 `Exec`、shell、任意文件 API、镜像选择或 E2B-specific option；未来 adapter 的策略封装在 Provider 内。
 
-在 Run store 实现 `ListByConversation` 并注册 `GET /api/v1/conversations/{conversation_id}/runs`，不存在 Conversation 404。另注册 `GET /api/v1/runs/{run_id}`、events list/stream、`POST /cancel`。Queued cancel 在同一 transaction 写 `cancelled`、`finalized_at` 与 `run.cancelled` Event；active cancellation 的终态完成由 Coordinator callback 执行，handler 只返回 202；不允许 handler 自行伪造 `finalized_at`。`main.go` 根据 `RUNTIME_MODE=http|fake` 注入唯一 `agentexec.Executor`，Fake 使用已提交 fixture。
+- [ ] **Step 5: 实现 Docker/Fake Provider、Run 路由和 cancellation service**
 
-`.env.example` 和 Compose 增加 `RUNTIME_MODE=http`。在 Task 5 已使用仓库根 build context 的 Dockerfile 中追加 `tests/fixtures/fake-runtime/` 到 `/app/fixtures/fake-runtime`；不得复制整个仓库或 `.env`。Runtime contract loader 和 Fake fixture root 从 `/app` 固定目录读取。
+Docker Provider 连接 Compose 常驻 Runtime，构造 `agentexec.HTTPExecutor`，只负责 health/路径映射/逻辑 Lease；它不按 Run 创建或销毁容器。`List` 通过 Runtime `ListExecutions` 映射为 LeaseInfo；已 acquire 但 execute 前 Control Plane 崩溃时，数据库中的 `sandbox_ref` 足以 Recover，且常驻容器不存在额外孤儿资源。
 
-- [ ] **Step 5: 验证并提交**
+Fake Provider 内部持有 fixture-backed、未导出的 Executor；Executor 在 terminal event 前复制 outputs，再流式发送相同 V1 event，Lease 的 `SyncBack` 保持 no-op。Fake 是 Provider adapter，不再是 `agentexec` 的并列实现。`factory.go` 是唯一按配置分支的位置，`main.go` 只接收构造完成的 `sandbox.Binding`。
+
+在 Run store 实现 `ListByConversation` 并注册 `GET /api/v1/conversations/{conversation_id}/runs`，不存在 Conversation 404。另注册 `GET /api/v1/runs/{run_id}`、events list/stream、`POST /cancel`。Queued cancel 在同一 transaction 写 `cancelled`、`finalized_at` 与 `run.cancelled` Event；active cancellation 的终态完成由 Coordinator callback 执行，handler 只返回 202；不允许 handler 自行伪造 `finalized_at`。
+
+`main.go` 通过 `sandbox.NewProvider(config)` 注入唯一 Binding，Run/HTTP packages 不读取 `SANDBOX_PROVIDER`。`.env.example` 使用 `SANDBOX_PROVIDER=docker`，Compose 使用 `${SANDBOX_PROVIDER:-docker}` 传入 Control Plane。在 Task 5 已使用仓库根 build context 的 Dockerfile 中追加 `tests/fixtures/fake-runtime/` 到 `/app/fixtures/fake-runtime`；不得复制整个仓库或 `.env`。Runtime contract loader 和 Fake fixture root 从 `/app` 固定目录读取。
+
+- [ ] **Step 6: 验证并提交**
 
 ```bash
-go -C services/control-plane test ./internal/agentexec ./internal/runs ./internal/httpapi -run 'Runtime|Run|Cancel|SSE' -v
+go -C services/control-plane test ./internal/agentexec ./internal/sandbox ./internal/runs ./internal/httpapi -run 'Runtime|Provider|Lease|Run|Cancel|SSE' -v
 docker compose -f docker-compose.yaml up -d --wait postgres
 TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harness_forge?sslmode=disable' go -C services/control-plane test -tags=integration ./internal/runs -run 'ListByConversation' -v
 go -C services/control-plane test ./...
-git add .env.example docker-compose.yaml services/control-plane/Dockerfile services/control-plane/internal/config services/control-plane/internal/agentexec services/control-plane/internal/runs services/control-plane/internal/httpapi services/control-plane/cmd tests/fixtures/fake-runtime
+git add .env.example docker-compose.yaml services/control-plane/Dockerfile services/control-plane/internal/config services/control-plane/internal/agentexec services/control-plane/internal/sandbox services/control-plane/internal/runs services/control-plane/internal/httpapi services/control-plane/cmd tests/fixtures/fake-runtime
 git diff --cached --check
-git commit -m "feat: stream runs through the runtime executor seam"
+git commit -m "feat: add sandbox providers and stream run events"
 ```
 
 ### Task 9：实现 Artifact 发布与隔离 Gateway
@@ -804,13 +868,17 @@ Expected: PASS，两个非 root 容器共享目录权限正确。
 
 Coordinator 先按 Run 读取 trigger Message、Conversation、Project 和所有未删除 Input；断言 Message 确属 Conversation、Conversation 确属 Project。它用 trigger Message `content` 作为新 prompt、Task 5 immutable Profile snapshot/digest 和绝对 Workspace paths 构造 ExecuteRequest。首轮 Conversation `active_sdk_session_id=NULL` 时 source 为 null；第二轮精确传当前 active Session，测试两种 request，并证明 candidate 未在成功 transaction 前覆盖 source pointer。
 
-Fake Executor 发 `assistant.message` 与 `agent.completed(candidate_session_id, artifacts)`。`00003` 给 assistant Message 增加 nullable `run_id/runtime_sequence` 和 partial unique，并给 Run Event 增加 nullable `dedupe_key` 与 partial unique `(run_id,dedupe_key)`。Coordinator 幂等地把 normalized assistant reply 同时持久化为 Run Event 与 Conversation Message，刷新 Messages API 后仍可见。
+在本地 Workspace 准备完成后，Coordinator 先调用 `BeginSandboxAcquire` 持久化当前全局 Provider 名，再调用 `Provider.Acquire(RunID, localPaths)`；成功后用 `AttachSandboxRef` 持久化 `Lease.Ref()`，并使用 `Lease.Paths()` 构造 ExecuteRequest。测试必须证明 request 中没有硬编码 `/workspaces`。Acquire 以 Run ID 幂等，因此“环境已创建但 ref 写库前崩溃”可按已记录 provider 从 `List` 找回；“ref 已写库但 execute 前崩溃”可用 `Recover` 找回。配置切换也不会让 ref 为空的旧 Run 被错误 Provider 接管。
 
-成功路径断言 Go 验证 Manifest、在共享 Artifact publication advisory lock 下上传 objects，然后开启 PostgreSQL transaction，按 Project row → Conversation row 加锁并再次确认未删除；在同一个 transaction 中插入全部 Artifact metadata、更新 Conversation active Session、写 Run candidate Session/status=succeeded。强制任一步失败时三类产品状态都回滚并走 abort。promotion/delete race test 证明 delete 先提交则 promotion 被拒绝并 abort，promotion 先提交则 delete 看到 unfinalized Run 返回 conflict。
+Fake Lease 的 Runtime 发 `assistant.message` 与 `agent.completed(candidate_session_id, artifacts)`。`00003` 给 assistant Message 增加 nullable `run_id/runtime_sequence` 和 partial unique，并给 Run Event 增加 nullable `dedupe_key` 与 partial unique `(run_id,dedupe_key)`。Coordinator 幂等地把 normalized assistant reply 同时持久化为 Run Event 与 Conversation Message，刷新 Messages API 后仍可见。
 
-产品状态 transaction 提交后调用 `finalize(commit)`；ack 后用一个 PostgreSQL transaction 同时写 `finalized_at`、所有 `artifact.published` Event 和 `run.succeeded` Event。agent/publish failure、active cancel、restart interrupt 同理：Runtime abort ack 后在一个 transaction 写 `finalized_at` 与唯一对应的 `run.failed|run.cancelled|run.interrupted`；preparation failure/queued cancel 的无 Runtime 路径也在终态 transaction 内写 Event。任何 `run.*` terminal Event 都不得早于 `finalized_at`；dedupe key 固定为 `terminal:{status}`，Artifact 为 `artifact:{artifact_id}:published`，重试依赖 `00003` 唯一约束幂等。
+收到 `agent.completed` 后先调用 `Lease.SyncBack`，成功后 Go 才从本地 Workspace 验证 Manifest、在共享 Artifact publication advisory lock 下上传 objects，然后开启 PostgreSQL transaction，按 Project row → Conversation row 加锁并再次确认未删除；在同一个 transaction 中插入全部 Artifact metadata、更新 Conversation active Session、写 Run candidate Session/status=succeeded。强制 SyncBack、校验、上传或事务任一步失败时三类产品状态都回滚并走 abort。promotion/delete race test 证明 delete 先提交则 promotion 被拒绝并 abort，promotion 先提交则 delete 看到 unfinalized Run 返回 conflict。
 
-Run: `go -C services/control-plane test ./internal/runs -run 'Coordinator|ExecuteRequest|Promotion|AssistantMessage|Finalize' -v`
+产品状态 transaction 提交后调用 Runtime `finalize(commit)`，ack 后调用 `Lease.Release`；只有两者都成功，才用一个 PostgreSQL transaction 同时写 `finalized_at`、所有 `artifact.published` Event 和 `run.succeeded` Event。agent/publish failure、active cancel、restart interrupt 同理：Runtime abort ack 后 release Lease，再在一个 transaction 写 `finalized_at` 与唯一对应的 `run.failed|run.cancelled|run.interrupted`。preparation failure/queued cancel 因未 Acquire，可在终态 transaction 内直接写 Event。Release 失败保留既有终态 status 与 `finalized_at=NULL`，不得回滚已提交产品状态或重跑 Agent；周期协调只重试幂等 finalize/release。任何 `run.*` terminal Event 都不得早于 `finalized_at`；dedupe key 固定为 `terminal:{status}`，Artifact 为 `artifact:{artifact_id}:published`，重试依赖 `00003` 唯一约束幂等。
+
+call-log 测试精确断言成功顺序为 `materialize → persist_provider → acquire → persist_ref → execute → sync_back → publish → finalize(commit) → release → finalized/event`；失败/取消顺序为 `cancel? → diagnostic_sync(best effort) → finalize(abort) → release → finalized/event`。诊断 sync 失败只进入 structured diagnostics，不能覆盖 `agent_failed`、`cancelled` 等原始错误。
+
+Run: `go -C services/control-plane test ./internal/runs -run 'Coordinator|Lease|ExecuteRequest|Promotion|AssistantMessage|Finalize|Release|SyncBack' -v`
 
 Expected: FAIL，Coordinator/transaction choreography 尚不存在。
 
@@ -818,20 +886,26 @@ Expected: FAIL，Coordinator/transaction choreography 尚不存在。
 
 按下表逐行断言调用顺序、DB 结果及 scheduler 是否保持暂停：
 
-协调先遍历 PostgreSQL 的 unfinalized Runs，再处理 Runtime 中未被前一步消费的 records，优先级固定且各行互斥：
+协调先做 Provider 一致性 preflight：查询所有保留 Run 的 distinct `sandbox_provider`，只要存在非空值与部署配置不同就停止；V0 不尝试迁移 SDK Session 或跨 Provider purge。通过后调用 Provider `List`，再遍历 PostgreSQL unfinalized Runs；每个有 `sandbox_ref` 的 DB Run 必须用 `Recover` 获得 Lease 并通过 `Lease.Runtime()` 查询/处理 execution。最后处理未被 DB 消费的 Lease。优先级固定且各行互斥：
 
-| Priority / PostgreSQL | Runtime record | Required action |
+| Priority / PostgreSQL | Sandbox/Runtime | Required action |
 |---|---|---|
-| 1. succeeded，candidate 等于 Conversation active pointer | 任意/未列出 tombstone | 幂等 finalize(commit) → `HEAD candidate_session` → 同事务 finalized + published/succeeded Events |
-| 1b. succeeded，但 candidate 未 promotion | 任意 | 幂等 finalize(abort)；ack 后报告 hard consistency error，保留 DB unfinalized 并暂停，绝不 commit candidate |
-| 2. failed/cancelled/interrupted | 任意 | active 则 cancel 并确认 inactive → 幂等 finalize(abort) → 同事务 finalized + 对应 terminal Event |
-| 3. running | active/unfinalized | cancel → 确认 inactive → finalize(abort) → 同事务 interrupted+finalized+Event |
-| 4. running | absent | 同事务 interrupted+finalized+Event（无 disposition） |
-| 5. Runtime record 未匹配以上任何 DB Run | active/unfinalized | cancel → 确认 inactive → finalize(abort)，保留 tombstone待 purge |
+| 0. 任意保留 Run 的 `sandbox_provider` 与部署配置不同 | 不访问 | hard configuration error，scheduler 保持暂停；提示先用旧 Provider purge/reset，绝不拿当前 Provider 猜测恢复 |
+| 0b. Acquire 结果不确定，DB 尚无 ref | Provider `List` 有同 run_id Lease | 持久化 Provider/ref → Recover；再按当前 Run status 进入下方 disposition 分支 |
+| 0c. failed 且 DB 无 ref | Provider `List` 已成功且无同 run_id Lease | 已确认无资源；同事务 finalized + failed Event |
+| 1. succeeded，candidate 等于 Conversation active pointer | Lease 可恢复；Runtime 任意/未列出 tombstone | 幂等 finalize(commit) → `HEAD candidate_session` → Release → 同事务 finalized + published/succeeded Events |
+| 1b. succeeded，但 candidate 未 promotion | Lease 可恢复 | 幂等 finalize(abort) → Release；报告 hard consistency error，保留 DB unfinalized 并暂停，绝不 commit candidate |
+| 2a. failed/cancelled/interrupted | Lease 可恢复，Runtime 有 starting/active/awaiting-finalize record | active 则 cancel 并确认 inactive → best-effort SyncBack → 幂等 finalize(abort) → Release → 同事务 finalized + 对应 terminal Event |
+| 2b. failed/cancelled/interrupted | Lease 可恢复，Runtime 权威确认无 record | best-effort SyncBack → Release（不调用 finalize）→ 同事务 finalized + 对应 terminal Event |
+| 2c. failed/cancelled/interrupted | Lease 可恢复，但 Runtime execution 查询不可用/不确定 | 保持 unfinalized，不 Release；返回 retryable error |
+| 3a. running | Lease 可恢复且 Runtime 有 starting/active/awaiting-finalize record | cancel → 确认 inactive → best-effort SyncBack → finalize(abort) → Release → 同事务 interrupted+finalized+Event |
+| 3b. running | Lease 可恢复且 Runtime 权威确认无 record | best-effort SyncBack → Release → 同事务 interrupted+finalized+Event |
+| 4. running | ref 不存在或 Recover not found，且 Provider `List`/Runtime 均无记录 | 同事务 interrupted+finalized+Event（已确认无待释放资源） |
+| 5. Provider Lease 未匹配任何 DB Run | active/unfinalized 任意 | Recover → active 则 cancel → best-effort SyncBack → 有 execution 则 finalize(abort) → Release；terminal tombstone 留给 purge |
 
-若 succeeded Run 的 candidate 未被 promotion，按规格明确选择 abort；abort acknowledgement 后仍保留 hard consistency error 等待人工修复 DB product state，不把该 candidate 变为 active。Runtime `ListExecutions` 不返回的 terminal tombstone由幂等 `Finalize(decision)` 响应其既有 disposition；commit 后必须 `HEAD` Session 成功。这样 succeeded 不会落入 orphan 分支。
+若 succeeded Run 的 candidate 未被 promotion，按规格明确选择 abort；abort acknowledgement 与 release 后仍保留 hard consistency error 等待人工修复 DB product state，不把该 candidate 变为 active。Runtime `ListExecutions` 不返回的 terminal tombstone由幂等 `Finalize(decision)` 响应其既有 disposition；commit 后必须 `HEAD` Session 成功。这样 succeeded 不会落入 orphan 分支。
 
-Runtime 不可用、ack 丢失或 HEAD 异常时保留原状态并返回 retryable reconciliation error；启动不开放 scheduler，后台以 5 秒起始、最长 1 分钟的指数退避重试相同幂等 decision。矛盾 tombstone decision 是 hard error，必须保持暂停。测试还覆盖 prepare failure 无 Runtime disposition、publish failure abort、active cancel、DB commit 前崩溃、commit 后 ack 前崩溃、ack 后写 `finalized_at`/terminal Event 前崩溃。
+为 ambiguous execute 单独写三个红测：Runtime record 存在时严格 `cancel → diagnostic SyncBack → abort → release`；权威确认无 record 时 `diagnostic SyncBack → release-only`；execution 查询不可用时保持 unfinalized且零次 Release。Provider/Runtime 不可用、ack 丢失、Release 失败或 HEAD 异常时保留原状态并返回 retryable reconciliation error；启动不开放 scheduler，后台以 5 秒起始、最长 1 分钟的指数退避重试相同幂等 decision。失败/取消路径的 diagnostic SyncBack 失败只记录，不阻止 abort/release，也不覆盖原始错误。矛盾 tombstone decision、Provider mismatch 是 hard error，必须保持暂停。测试还覆盖 prepare failure 无 Lease、Acquire 后 ref 写库前崩溃、ref 写库后 execute 前崩溃、publish failure abort、active cancel、DB commit 前崩溃、commit 后 ack 前崩溃、release 后写 `finalized_at`/terminal Event 前崩溃。
 
 Run: `go -C services/control-plane test ./internal/runs -run 'Scheduler|Reconcile|Crash|Ack' -v`
 
@@ -839,7 +913,9 @@ Expected: FAIL，reconciler/scheduler 尚不存在。
 
 - [ ] **Step 4: 实现唯一 Coordinator、scheduler 和周期协调**
 
-Coordinator 是唯一组合 Inputs、Profile resolver、Workspace materializer、Executor、Artifact publisher 和 Run store 的 module。Scheduler 只 claim/调用 Coordinator，不复制状态机。启动先 reconcile 到“无 active worker 且无 retryable disposition”；运行中 reconciliation ticker 持续处理 unfinalized terminal Runs。下一 Run 只能在当前 Run `finalized_at` 非空后领取。
+Coordinator 是唯一组合 Inputs、Profile resolver、Workspace materializer、`sandbox.Binding`、Artifact publisher 和 Run store 的 module；它只用 validated `Binding.ID` 持久化身份，不持有裸 `agentexec.Executor`，也不导入 Docker/E2B 配置。Scheduler 只 claim/调用 Coordinator，不复制状态机。启动先 reconcile 到“无 active worker、无未释放 Lease 且无 retryable disposition”；运行中 reconciliation ticker 持续处理 unfinalized terminal Runs。下一 Run 只能在当前 Run `finalized_at` 非空后领取。
+
+Acquire/execute error 必须保留 outcome 分类：Acquire 明确未创建 Lease 时可直接 `failed+finalized`；Acquire 结果不确定时先写 `failed` 且保持 unfinalized，由已记录 Provider 的 `List` 以 run_id 查证。Execute 可能已被接受但 response 丢失时同样保持 unfinalized且不得 Release，协调 Recover Lease 并查 `ListExecutions`；有 starting/active/awaiting-finalize record 时 cancel/finalize(abort)/release，只有权威确认无 record 时才 release-only。不得仅凭 timeout 推断远端 Sandbox 或 Runtime execution 不存在。
 
 Event pump 必须按下表处理并用 `runtime_sequence` 幂等；每次 durable append 后通知 Task 8 broker，SSE 只从 DB 补读：
 
@@ -851,21 +927,21 @@ Event pump 必须按下表处理并用 `runtime_sequence` 幂等；每次 durabl
 | `tool.started/tool.completed` | append Run Event |
 | `artifact.candidate` | append Run Event 并缓存 typed summary；不写 Artifact metadata |
 | unknown non-terminal | 记录 debug log 后忽略，不更新状态、不结束 stream |
-| `agent.failed` | 同事务 append Runtime Event并写 status=failed/error、`finalized_at=NULL`；再 finalize(abort)，ack 后同事务 finalized+`run.failed` |
-| stream/protocol error or EOF without known terminal | 映射 typed failure；若 execute 未接受则同事务 failed+finalized+Event；否则先同事务 failed/error 且保持 unfinalized，再 abort，ack 后 finalized+Event |
-| `agent.completed` | 校验 candidate ID/summary 与 Manifest；在任何 object upload 前同事务切 phase=`publishing` 并 append phase Event，然后执行成功两阶段发布 |
+| `agent.failed` | 同事务 append Runtime Event并写 status=failed/error、`finalized_at=NULL`；再 best-effort SyncBack → finalize(abort) → Release，全部 ack 后同事务 finalized+`run.failed` |
+| stream/protocol error or EOF without known terminal | 映射 typed failure；先同事务 failed/error 且保持 unfinalized；确认 worker inactive后 diagnostic SyncBack；若 execute 权威确认未创建 Runtime state则 release-only，否则 abort → release，ack 后 finalized+Event |
+| `agent.completed` | 校验 candidate ID/summary，先 SyncBack，再从本地路径校验 Manifest；在任何 object upload 前同事务切 phase=`publishing` 并 append phase Event，然后执行成功两阶段发布 |
 
-Active cancel 先在 transaction 写 status=cancelled、诊断原因和 `finalized_at=NULL`，再 cancel worker/确认 inactive/finalize(abort)，ack 后同事务写 finalized+`run.cancelled`。Artifact validation/publication failure 同样先持久化 status=failed/error/unfinalized 再 abort。这样 Go 在 abort ack 前崩溃时，reconcile 会按原 failed/cancelled status 重试正确 disposition，而不会误改为 interrupted。`agent.completed/agent.failed` 后出现额外已知 event 是 protocol error。进入 `publishing` 后 Cancel service 必须返回 409。
+Active cancel 先在 transaction 写 status=cancelled、诊断原因和 `finalized_at=NULL`，再 cancel worker/确认 inactive/best-effort diagnostic SyncBack/finalize(abort)/release，全部 ack 后同事务写 finalized+`run.cancelled`。Artifact validation/publication failure 同样先持久化 status=failed/error/unfinalized，再 diagnostic SyncBack/abort/release。这样 Go 在 abort ack 或 release 前崩溃时，reconcile 会按原 failed/cancelled status 重试正确 disposition，而不会误改为 interrupted。`agent.completed/agent.failed` 后出现额外已知 event 是 protocol error。进入 `publishing` 后 Cancel service 必须返回 409。
 
-`coordinator_integration_test.go` 首行为 `//go:build integration`，在真实 PostgreSQL 中注入每个 statement 的失败点，证明 Artifact metadata、active Session 和 succeeded Run 全有或全无；并覆盖 assistant Message/Event 幂等、promotion/delete race，以及 finalize ack 后 `finalized_at` 与 terminal Events 的同事务原子性。
+`coordinator_integration_test.go` 首行为 `//go:build integration`，在真实 PostgreSQL 中注入每个 statement 的失败点，证明 Artifact metadata、active Session 和 succeeded Run 全有或全无；并覆盖 sandbox provider 先于 Acquire、ref 在 Acquire 后分阶段幂等持久化、assistant Message/Event 幂等、promotion/delete race，以及 finalize/release ack 后 `finalized_at` 与 terminal Events 的同事务原子性。
 
 - [ ] **Step 5: 验证并提交**
 
 ```bash
-go -C services/control-plane test ./internal/profiles ./internal/workspaces ./internal/runs -run 'Profile|Workspace|Scheduler|Coordinator|Reconcile' -v
+go -C services/control-plane test ./internal/profiles ./internal/workspaces ./internal/sandbox ./internal/runs -run 'Profile|Workspace|Provider|Scheduler|Coordinator|Reconcile' -v
 TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harness_forge?sslmode=disable' go -C services/control-plane test -tags=integration ./internal/runs -run 'Coordinator' -v
 go -C services/control-plane test ./...
-git add docker-compose.yaml services/control-plane/Dockerfile services/agent-runtime/Dockerfile services/control-plane/migrations/00003_message_and_event_idempotency.sql services/control-plane/internal/workspaces services/control-plane/internal/runs services/control-plane/cmd
+git add docker-compose.yaml services/control-plane/Dockerfile services/agent-runtime/Dockerfile services/control-plane/migrations/00003_message_and_event_idempotency.sql services/control-plane/internal/workspaces services/control-plane/internal/sandbox services/control-plane/internal/runs services/control-plane/cmd
 git diff --cached --check
 git commit -m "feat: coordinate durable agent runs"
 ```
@@ -891,7 +967,7 @@ git commit -m "feat: coordinate durable agent runs"
 
 - [ ] **Step 1: 写清理顺序与幂等失败测试**
 
-断言顺序：MinIO prefix → SDK Session → Workspace → execution tombstone → PostgreSQL hard delete。外部资源“不存在”为成功；中途失败后重跑不得删除共享 Input File。再次覆盖 Project/Conversation 有 queued/running/unfinalized Run 时 HTTP 删除 409。
+断言顺序：MinIO prefix → 通过记录的 Provider/ref Recover（若仍需 Runtime 清理）→ SDK Session → Workspace → execution tombstone → 幂等 Release → PostgreSQL hard delete。外部资源“不存在”为成功；中途失败后重跑不得删除共享 Input File。再次覆盖 Project/Conversation 有 queued/running/unfinalized Run 时 HTTP 删除 409。Purge 接收 composition root 注入的同一 `sandbox.Binding`，不自行拼 Runtime URL，也不读取 Docker/E2B-specific 配置；任一待清理 Run 的 recorded provider 与 `Binding.ID` 不同则 fail closed，且不删除任何该根数据。
 
 另写 orphan 测试：存在 `projects/{project_id}/artifacts/{artifact_id}/` prefix 但 DB 无该 Artifact metadata 时删除；有 metadata 时保留；路径层级异常或 artifact_id 非 UUID 时跳过并报告。Scanner 必须先取得 Task 9 同一个 `artifact-maintenance` session advisory lock，持锁完成 list/DB compare/delete 后再 release；并发测试让 publication 在 upload 后暂停，证明 scanner 无法进入，metadata commit/release 后 scanner 保留合法 prefix。`purge_integration_test.go` 首行为 `//go:build integration`，用真实 MinIO/PostgreSQL 验证 DB commit 失败遗留 prefix 能被发现、不可通过 Gateway 读取并最终清除。
 
@@ -921,7 +997,9 @@ purge-deleted-dry-run:
 	docker compose -f docker-compose.yaml run --rm --no-deps control-plane /usr/local/bin/purge-deleted --dry-run
 ```
 
-Control Plane Dockerfile 同时构建 `/usr/local/bin/harness-forge` 与 `/usr/local/bin/purge-deleted`。Purge CLI 与 server 共用 Task 4 migration runner：连接数据库后先取得 migration lock 并升级 schema，再查询待清理根，因此可从空数据库启动。Compose 的 one-shot `run` 继承 Control Plane 的内部 PostgreSQL/MinIO/Runtime environment 和 `run-workspaces:/workspaces` volume；`minio-init` 确保 bucket 存在，因此命令能从干净环境按规格清 Workspace、Session 和 tombstone。不得在宿主机直接 `go run` maintenance command。
+若启动提示 Provider mismatch，必须在仍可访问旧 Provider 时显式运行，例如 `SANDBOX_PROVIDER=docker make purge-deleted`，确认旧数据清完后才改部署默认值。Make/Compose 必须保留 shell override，不得在 yaml 中写死 Provider。
+
+Control Plane Dockerfile 同时构建 `/usr/local/bin/harness-forge` 与 `/usr/local/bin/purge-deleted`。Purge CLI 与 server 共用 Task 4 migration runner和 Task 8 Provider factory：连接数据库后先取得 migration lock 并升级 schema，再查询待清理根，因此可从空数据库启动。Compose 的 one-shot `run` 继承 Control Plane 的内部 PostgreSQL/MinIO/Sandbox environment 和 `run-workspaces:/workspaces` volume；`minio-init` 确保 bucket 存在，因此命令能从干净环境按规格清 Workspace、Session 和 tombstone。不得在宿主机直接 `go run` maintenance command。
 
 - [ ] **Step 3: 验证并提交**
 
@@ -1039,7 +1117,7 @@ uv lock --check
 
 - [ ] **Step 2: 写 SDK adapter/fork 失败测试并确认红灯**
 
-覆盖首轮 `resume=None/fork_session=False`、后续 `resume=source_sdk_session_id/fork_session=True`（绝不 resume candidate）、`cwd=workspace`、Profile system prompt、allowed/disallowed tools、`permission_mode=default`、max turns/budget 和 Base URL env。Fail-closed `can_use_tool` callback 只批准 Profile allowed list，显式拒绝 disallowed 和任何未知新增 tool；测试 Read/Bash 获批、WebFetch/unknown 被拒。SDK partial `StreamEvent` 文本映射为 `assistant.delta`。Adapter 从首个 SDK init `SystemMessage` 提取 candidate Session ID，经 callback/control channel 上报，再规范化 assistant/tool/Result messages；缺 init、candidate 与 Result session 不一致、SDK error 均失败且不报告 completed。
+覆盖首轮 `resume=None/fork_session=False`、后续 `resume=source_sdk_session_id/fork_session=True`（绝不 resume candidate）、`cwd=workspace`、Profile system prompt、allowed/disallowed tools、`permission_mode=default`、max turns/budget 和 Base URL env。Fail-closed `can_use_tool` callback 只批准 Profile allowed list，显式拒绝 disallowed 和任何未知新增 tool；测试 Read/Bash 获批、WebFetch/unknown 被拒。SDK partial `StreamEvent` 文本映射为 `assistant.delta`。Adapter 从首个 SDK init `SystemMessage` 提取 candidate Session ID，经 callback/control channel 上报，再规范化 assistant/tool/Result messages；candidate 必须不同于 source 且不属于 execute 前记录的 `baseline_session_ids`。缺 init、candidate 等于 source、candidate 已在 baseline、candidate 与 Result session 不一致、SDK error 均失败且不报告 completed。
 
 Run: `uv run pytest tests/test_claude_adapter.py -v`
 
@@ -1055,7 +1133,7 @@ Expected: PASS。确认绿色后才进入 Session/finalize 下一轮红测。
 
 - [ ] **Step 4: 写 Session/finalize HTTP 失败测试并确认红灯**
 
-测试 Runtime 私有 Session root 下的 `list_ids/exists/delete/sync_transcript`：不可信 ID、绝对路径、`..`、symlink escape 全拒绝；sync 必须 fsync transcript regular files、Session directory 和受影响父目录；缺失 Session 的 DELETE 幂等 204。覆盖 `HEAD /v1/sessions/{id}` 200/404、`DELETE /v1/sessions/{id}` 204，以及 finalize：starting/running 409，只允许 awaiting_finalize；commit 要求 candidate 已记录、存在且 `candidate_durable_at` 非空，否则 409；abort 先删除 candidate，成功后才写 aborted tombstone；同 decision 幂等，矛盾 decision 409。
+测试 Runtime 私有 Session root 下的 `list_ids/exists/delete/sync_transcript`：不可信 ID、绝对路径、`..`、symlink escape 全拒绝；sync 必须 fsync transcript regular files、Session directory 和受影响父目录；缺失 Session 的 DELETE 幂等 204。覆盖 `HEAD /v1/sessions/{id}` 200/404、`DELETE /v1/sessions/{id}` 204，以及 finalize：starting/running 409，只允许 awaiting_finalize；commit 要求 candidate 已记录、存在、不同于 source、不在 `baseline_session_ids` 且 `candidate_durable_at` 非空，否则 409；abort 只能删除已验证为本 Run 新建的 candidate，绝不能删除 source/baseline Session；同 decision 幂等，矛盾 decision 409。
 
 Run: `uv run pytest tests/test_sessions.py tests/test_session_api.py tests/test_execution_api.py -v`
 
@@ -1063,7 +1141,7 @@ Expected: FAIL，Session store/HTTP/finalize 尚不存在。
 
 - [ ] **Step 5: 实现 Session operations 与无泄漏 abort**
 
-`sessions.py` 是 SDK Session 目录唯一 adapter，Session ID 解析后 resolve 必须仍在 Runtime-owned root。Execute reserve 在启动 worker 前持久化 `baseline_session_ids`；worker 从 init 取得 candidate 后经 control pipe 让父进程原子写 record，随后才 relay public events。SDK Result 后，worker 调用 `sync_transcript(candidate)`，再发送 `candidate_durable` control message；父进程重新验证 Session、把 `candidate_durable_at` 原子写 record并 ack，worker 之后才可发 `artifact.candidate/agent.completed`。
+`sessions.py` 是 SDK Session 目录唯一 adapter，Session ID 解析后 resolve 必须仍在 Runtime-owned root。Execute reserve 在启动 worker 前持久化 `baseline_session_ids`；worker 从 init 取得 candidate 后经 control pipe 上报，父进程验证 `candidate != source` 且 `candidate not in baseline_session_ids` 后才原子写 record，随后才 relay public events。SDK Result 后，worker 调用 `sync_transcript(candidate)`，再发送 `candidate_durable` control message；父进程重新验证同一归属与 Session、把 `candidate_durable_at` 原子写 record并 ack，worker 之后才可发 `artifact.candidate/agent.completed`。
 
 若 SIGKILL/SDK failure 发生在 candidate 上报前，global concurrency=1 且 Session root 只属于 Runtime，abort 用 `current_ids - baseline_ids` 删除本 Run 新建 Session；测试模拟 init 前/后取消，均无新 Session 泄漏。另做 restart/resume test：收到 `agent.completed` 后立即重建 ExecutionStore/SessionStore，以该 candidate 作为下一 Run source，mock SDK 断言能读到已 fsync transcript 并用 resume+fork 启动。
 
@@ -1113,7 +1191,7 @@ Expected: PASS。确认绿色后进入 process/API 下一轮红测。
 
 - [ ] **Step 3: 写取消和 restart 失败测试**
 
-覆盖 active duplicate 同 Run 409 `already_running`、不同 Run 409 `runtime_busy`、awaiting-finalize duplicate 409、committed/aborted duplicate 200 JSON disposition且不启动 worker。Cancel 对 starting 必须设置取消意图并与 spawn lock 串行：Popen 前取消则永不 spawn，Popen 后则关闭 barrier、终止并 wait，任何路径都不得放行 child；running 先 SIGTERM、超时后 SIGKILL，重复 cancel 204；awaiting/terminal cancel 204，未知 Run 404。客户端断流后父进程继续 drain 到 event log并更新 awaiting_finalize。
+覆盖 active duplicate 同 Run 409 `already_running`、不同 Run 409 `runtime_busy`、awaiting-finalize duplicate 409、committed/aborted duplicate 200 JSON disposition且不启动 worker。Cancel 对 starting 必须设置取消意图并与 spawn lock 串行：Popen 前取消则永不 spawn，Popen 后则关闭 barrier、终止并 wait，任何路径都不得放行 child；确认没有活动进程后必须原子转为 `awaiting_finalize`，让 Go 可以 `finalize(abort)` 后 Release。running 先 SIGTERM、超时后 SIGKILL，确认 inactive 后同样转 awaiting-finalize；重复 cancel 204；awaiting/terminal cancel 204，未知 Run 404。客户端断流后父进程继续 drain 到 event log并更新 awaiting_finalize。
 
 启动采用 barrier pipe：child 新 process group 启动后先阻塞；parent 取得 PID/PGID、原子持久化 running record并 fsync 后才放行。测试注入 reserve 后/Popen 前崩溃，restart 将无 PGID 的 starting record 转 awaiting_finalize；注入“Popen 后、record 前”父进程崩溃，pipe EOF 使 child 自退且 restart 转 awaiting_finalize；注入 record 后崩溃，restart kill 整个 PGID、等待 inactive并转 awaiting_finalize。全部 startup cleanup 完成后 health 才 ready。
 
@@ -1123,7 +1201,7 @@ Expected: FAIL，process manager/execute endpoint 尚不存在。
 
 - [ ] **Step 4: 实现 worker process 与 `application/x-ndjson` endpoint**
 
-API server 将 ExecuteRequest 原子写入 execution directory，记录 baseline Session IDs，建立 start/candidate-control pipes，以 `python -m harness_forge_runtime.runner <request-file>` 启动新 process group。ProcessManager 的 per-run async lock 串行 spawn/cancel；父进程持久化 PGID并再次检查 cancel intent 后才放行。candidate control message 持久化并 ack。stdout 同时写 execution event log与 HTTP stream；客户端断开不取消 worker，server 继续消费并记录唯一终态，worker exit 后转 awaiting_finalize。
+API server 将 ExecuteRequest 原子写入 execution directory，记录 baseline Session IDs，建立 start/candidate-control pipes，以 `python -m harness_forge_runtime.runner <request-file>` 启动新 process group。ProcessManager 的 per-run async lock 串行 spawn/cancel；父进程持久化 PGID并再次检查 cancel intent 后才放行。Popen 前取消、barrier 阶段取消、running 取消和 restart cleanup 都必须在确认无活动进程后原子转 `awaiting_finalize`，不得让 starting/running record 阻塞 abort。candidate control message 持久化并 ack。stdout 同时写 execution event log与 HTTP stream；客户端断开不取消 worker，server 继续消费并记录唯一终态，worker exit 后转 awaiting_finalize。
 
 只有 execution store reserve 成功才创建 worker。Worker 非零退出、stdout 非法、缺 terminal 映射为父进程合成的 `agent.failed`；协议错误保留受大小限制的 stderr 和 correlation ID，但 redaction 后才落盘，禁止 credential/env 写入 event。GET executions 返回 active/unfinalized state；server readiness 要等 startup cleanup 完成。
 
@@ -1444,12 +1522,12 @@ git diff --cached --check
 git commit -m "feat: browse immutable run artifacts"
 ```
 
-### Task 21：完成 Fake Runtime Playwright E2E
+### Task 21：完成 Fake SandboxProvider Playwright E2E
 
 **Files:**
-- Modify: `services/control-plane/internal/agentexec/fake.go`
+- Modify: `services/control-plane/internal/sandbox/fake.go`
 - Modify: `services/control-plane/internal/agentexec/http_test.go`
-- Create: `services/control-plane/internal/agentexec/fake_test.go`
+- Modify: `services/control-plane/internal/sandbox/fake_test.go`
 - Modify: `tests/fixtures/fake-runtime/geo-report/events.ndjson`
 - Modify: `tests/fixtures/fake-runtime/geo-report/outputs/artifact-manifest.json`
 - Modify: `tests/fixtures/fake-runtime/geo-report/outputs/report/index.html`
@@ -1494,10 +1572,11 @@ test-e2e:
 	  project=harness-forge-e2e; \
 	  cleanup() { docker compose -f docker-compose.yaml -p $$project down -v --remove-orphans; }; \
 	  trap cleanup EXIT INT TERM; \
-	  export RUNTIME_MODE=fake WEB_PORT=15173 CONTROL_PLANE_PORT=18080 ARTIFACT_PORT=18081 RUNTIME_PORT=18090 POSTGRES_PORT=15432 MINIO_PORT=19000 MINIO_CONSOLE_PORT=19001; \
+	  export SANDBOX_PROVIDER=fake WEB_PORT=15173 CONTROL_PLANE_PORT=18080 ARTIFACT_PORT=18081 RUNTIME_PORT=18090 POSTGRES_PORT=15432 MINIO_PORT=19000 MINIO_CONSOLE_PORT=19001; \
 	  export POSTGRES_DB=harness_forge POSTGRES_USER=harness_forge POSTGRES_PASSWORD=local-dev-only MINIO_ROOT_USER=harness_forge MINIO_ROOT_PASSWORD=local-dev-only MINIO_BUCKET=harness-forge; \
 	  export WEB_ORIGIN=http://localhost:15173 ARTIFACT_PUBLIC_ORIGIN=http://localhost:18081; \
 	  docker compose -f docker-compose.yaml -p $$project up -d --build --wait; \
+	  docker compose -f docker-compose.yaml -p $$project exec -T control-plane sh -c 'test "$$SANDBOX_PROVIDER" = fake'; \
 	  cd tests/e2e; \
 	  pnpm install --frozen-lockfile; \
 	  pnpm exec playwright install chromium; \
@@ -1506,18 +1585,18 @@ test-e2e:
 
 `playwright.config.ts` 只连接已由 Make 启动的服务，不另起 webServer。Run: `make test-e2e`
 
-Expected: health spec PASS，trap 清理 volumes。先证明 harness 可用，再增加行为红测。
+Expected: env assertion 与 health spec PASS，证明 Compose 插值实际启用 Fake Provider；trap 清理 volumes。先证明 harness 可用，再增加行为红测。
 
 - [ ] **Step 2: 写 Fake scenario 和完整 E2E 失败测试**
 
-Fake 模式保留普通 prompt 默认 `geo-report`；测试前缀 `[fixture:<scenario>]` 选择 `geo-report|success-v2|agent-failure|invalid-manifest|delayed-success|blocking`。`scenario.json` schema 固定：`{version:1, base_fixture:string, event_delay_ms:uint, block_before_type:string|null, release:"none"|"context_cancel"}`。Delayed 固定 `{base_fixture:"geo-report",event_delay_ms:1000,block_before_type:null,release:"none"}`；blocking 固定 `{base_fixture:"geo-report",event_delay_ms:50,block_before_type:"agent.completed",release:"context_cancel"}`。Cancel context 只解除 blocking 且不得再发 terminal；其他业务 event 仍来自 V1 NDJSON。Go 测试覆盖 selector、outputs、第二版本、失败、无效 Manifest、精确 delay hook 和 cancel release；HTTP mode 不解析前缀。
+Fake Provider 保留普通 prompt 默认 `geo-report`；测试前缀 `[fixture:<scenario>]` 选择 `geo-report|success-v2|agent-failure|invalid-manifest|delayed-success|blocking`。`scenario.json` schema 固定：`{version:1, base_fixture:string, event_delay_ms:uint, block_before_type:string|null, release:"none"|"context_cancel"}`。Delayed 固定 `{base_fixture:"geo-report",event_delay_ms:1000,block_before_type:null,release:"none"}`；blocking 固定 `{base_fixture:"geo-report",event_delay_ms:50,block_before_type:"agent.completed",release:"context_cancel"}`。Cancel context 只解除 blocking 且不得再发 terminal；其他业务 event 仍来自 V1 NDJSON。Go 测试覆盖 selector、outputs、第二版本、失败、无效 Manifest、精确 delay hook 和 cancel release；Docker Provider 的 HTTP Runtime 不解析测试前缀。
 
 Golden path 创建 Geo Project、上传 CSV、创建两个 Conversation、发送 `[fixture:geo-report]`、观察 tool steps、打开 primary HTML并断言 `window.echarts`、继续 `[fixture:success-v2]` 产生新版本、切回旧版、刷新后通过 Conversation Runs API恢复。
 
 第二 Conversation 也实际提交首个 `[fixture:geo-report]` Run，完成后从 Run API 断言 `source_sdk_session_id=null`，再验证两个 Conversation timeline互不串线。恢复/失败 specs 在 delayed-success 的 `tool.started` 出现后、下一 event 的 1000ms 窗口内 reload，断言 replay sequence 无 gap/duplicate并最终成功；用 blocking Run 占全局 worker、创建第二 queued Run并取消；active 时删除 409；agent-failure、invalid-manifest、当前失败保留上一 Artifact。所有请求经浏览器→Go，禁止 route.fulfill/mock API。
 
 ```bash
-go -C services/control-plane test ./internal/agentexec -run 'FakeScenario' -v
+go -C services/control-plane test ./internal/sandbox -run 'FakeScenario' -v
 make test-e2e
 ```
 
@@ -1527,7 +1606,7 @@ Expected: 两条命令分别 FAIL 于 selector 与 unknown scenario/第二版本
 
 实现上述 fixtures。成功 fixture HTML 引用同 prefix `report/vendor/echarts.min.js` 小型 stub并设置 `window.echarts`，用于证明 JS Content-Type + nosniff；真实 ECharts 由 Task 16 smoke 验证。
 
-Run: `go -C services/control-plane test ./internal/agentexec -run 'FakeScenario' -v`
+Run: `go -C services/control-plane test ./internal/sandbox -run 'FakeScenario' -v`
 
 Expected: PASS。
 
@@ -1535,13 +1614,13 @@ Expected: PASS。
 
 Run: `make test-e2e`
 
-Expected: 全部行为 specs PASS；parent 与 `frame-ancestors` 都使用 `localhost:15173`，iframe 不被 CSP 阻止；失败保留 trace/screenshot，trap 始终清理。
+Expected: 全部行为 specs PASS；`[fixture:*]` 产生确定性 Fake events/artifacts，间接证明没有调用 Docker Runtime 或真实 Claude；parent 与 `frame-ancestors` 都使用 `localhost:15173`，iframe 不被 CSP 阻止；失败保留 trace/screenshot，trap 始终清理。
 
 - [ ] **Step 5: 运行并提交 E2E**
 
 ```bash
 make test-e2e
-git add services/control-plane/internal/agentexec tests/fixtures/fake-runtime tests/e2e docker-compose.yaml Makefile
+git add services/control-plane/internal/agentexec services/control-plane/internal/sandbox tests/fixtures/fake-runtime tests/e2e docker-compose.yaml Makefile
 git diff --cached --check
 git commit -m "test: cover the Harness Forge user journey"
 ```
@@ -1554,7 +1633,9 @@ Expected: Playwright 全部 PASS，命令结束后 Compose 资源被清理。
 - Modify: `README.md`
 - Create: `docs/development/local-setup.md`
 - Create: `docs/development/troubleshooting.md`
+- Create: `docs/development/verification.md`
 - Create: `docs/architecture/runtime-protocol.md`
+- Create: `docs/architecture/sandbox-provider.md`
 - Create: `docs/decisions/0001-postgres-and-s3-for-local-v0.md`
 - Modify: `Makefile`
 
@@ -1564,7 +1645,7 @@ README 和本 Task 新增文档全部使用中文，并链接中英文设计规�
 
 - [ ] **Step 2: 编写排障、协议与 ADR**
 
-排障覆盖端口、MinIO bucket、migration、Runtime unavailable、unfinalized Run、Session missing、孤儿对象、SSE 和 Claude credential。ADR 只记录个人项目选择 PostgreSQL+S3 的不可直觉权衡，以及重新评估条件。
+排障覆盖端口、MinIO bucket、migration、Provider 配置不匹配（必须用旧 Provider purge/reset 后才能切换）、Sandbox acquire/sync/release、Runtime unavailable、unfinalized Run、Session missing、孤儿对象、SSE 和 Claude credential。`sandbox-provider.md` 记录接口不变量、Docker/Fake 行为、Run lifecycle 顺序及未来 E2B adapter 的接入清单，并明确 V0 无 E2B 依赖、无通用 shell/filesystem API、无跨 Provider Session/历史迁移。ADR 只记录个人项目选择 PostgreSQL+S3 的不可直觉权衡，以及重新评估条件。
 
 - [ ] **Step 3: 运行完整验证**
 
@@ -1576,10 +1657,11 @@ test-integration:
 	  project=harness-forge-integration; \
 	  cleanup() { docker compose -f docker-compose.yaml -p $$project down -v --remove-orphans; }; \
 	  trap cleanup EXIT INT TERM; \
-	  export RUNTIME_MODE=fake CONTROL_PLANE_PORT=28080 ARTIFACT_PORT=28081 RUNTIME_PORT=28090 POSTGRES_PORT=25432 MINIO_PORT=29000 MINIO_CONSOLE_PORT=29001; \
+	  export SANDBOX_PROVIDER=fake CONTROL_PLANE_PORT=28080 ARTIFACT_PORT=28081 RUNTIME_PORT=28090 POSTGRES_PORT=25432 MINIO_PORT=29000 MINIO_CONSOLE_PORT=29001; \
 	  export POSTGRES_DB=harness_forge POSTGRES_USER=harness_forge POSTGRES_PASSWORD=local-dev-only MINIO_ROOT_USER=harness_forge MINIO_ROOT_PASSWORD=local-dev-only MINIO_BUCKET=harness-forge; \
 	  export WEB_ORIGIN=http://localhost:25173 ARTIFACT_PUBLIC_ORIGIN=http://localhost:28081; \
 	  docker compose -f docker-compose.yaml -p $$project up -d --build --wait postgres minio minio-init runtime-volume-init control-plane agent-runtime; \
+	  docker compose -f docker-compose.yaml -p $$project exec -T control-plane sh -c 'test "$$SANDBOX_PROVIDER" = fake'; \
 	  TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:25432/harness_forge?sslmode=disable' \
 	  TEST_MINIO_ENDPOINT='localhost:29000' TEST_MINIO_ACCESS_KEY='harness_forge' TEST_MINIO_SECRET_KEY='local-dev-only' \
 	  COMPOSE_PROJECT_NAME=$$project go -C services/control-plane test -tags=integration ./internal/... -v
@@ -1604,22 +1686,46 @@ set -eu
 project=harness-forge-clean-verify
 cleanup() { docker compose -f docker-compose.yaml -p "$project" down -v --remove-orphans; }
 trap cleanup EXIT INT TERM
-export RUNTIME_MODE=fake WEB_PORT=35173 CONTROL_PLANE_PORT=38080 ARTIFACT_PORT=38081 RUNTIME_PORT=38090 POSTGRES_PORT=35432 MINIO_PORT=39000 MINIO_CONSOLE_PORT=39001
+export SANDBOX_PROVIDER=fake WEB_PORT=35173 CONTROL_PLANE_PORT=38080 ARTIFACT_PORT=38081 RUNTIME_PORT=38090 POSTGRES_PORT=35432 MINIO_PORT=39000 MINIO_CONSOLE_PORT=39001
 export POSTGRES_DB=harness_forge POSTGRES_USER=harness_forge POSTGRES_PASSWORD=local-dev-only MINIO_ROOT_USER=harness_forge MINIO_ROOT_PASSWORD=local-dev-only MINIO_BUCKET=harness-forge
 export WEB_ORIGIN=http://localhost:35173 ARTIFACT_PUBLIC_ORIGIN=http://localhost:38081
 docker compose -f docker-compose.yaml -p "$project" up -d --build --wait
+docker compose -f docker-compose.yaml -p "$project" exec -T control-plane sh -c 'test "$SANDBOX_PROVIDER" = fake'
 curl -fsS http://localhost:35173/
 curl -fsS http://localhost:35173/health
 docker compose -f docker-compose.yaml -p "$project" ps
 ```
 
-Expected: 必需服务全部 healthy；只清理 `harness-forge-clean-verify`，不删除开发者默认项目数据。README 人工 golden path 与 Task 21 自动路径字段一致。
+Expected: 必需服务全部 healthy且 Control Plane 环境明确为 Fake；只清理 `harness-forge-clean-verify`，不删除开发者默认项目数据。README 人工 golden path 与 Task 21 自动路径字段一致。
 
-- [ ] **Step 5: 提交交付文档**
+- [ ] **Step 5: 提交交付文档，形成可供干净环境检出的 commit**
 
 ```bash
 git add README.md docs Makefile
 git commit -m "docs: document local V0 operation"
+```
+
+- [ ] **Step 6: 在 fresh clone 和第二 Docker 环境执行 README golden path**
+
+在临时目录 `git clone --no-local <repo-path> harness-forge-clean`，checkout 上一步 commit，不复制工作区构建产物、`.env`、volumes 或 node/python cache。先在 fresh clone 按 README 从 `.env.example` 创建 `.env`，逐条执行启动命令；再人工完成“创建 Geo Project → 上传 `tests/e2e/fixtures/locations.csv` → 创建 Conversation → 发送 `[fixture:geo-report]` → 等待 succeeded → 打开主 HTML Artifact”，记录 Project/Conversation/Run/Artifact ID。
+
+同一 commit 还必须在另一台 Docker-capable machine 或干净 CI runner 上执行：
+
+```bash
+make verify-layout
+make test
+make test-integration
+make test-e2e
+docker compose -f docker-compose.yaml config --quiet
+```
+
+`docs/development/verification.md` 记录 commit SHA、日期、OS/architecture、Docker/Compose 版本、上述命令结果和 golden-path IDs，不记录凭证。若没有第二环境，本 Task 不得勾选完成，不能用当前工作区 health 代替。
+
+- [ ] **Step 7: 提交验证记录并确认工作区干净**
+
+```bash
+git add docs/development/verification.md
+git commit -m "docs: record clean environment verification"
 test -z "$(git status --porcelain)"
 ```
 
@@ -1628,11 +1734,13 @@ test -z "$(git status --porcelain)"
 - [ ] `make dev` 能启动 PostgreSQL、MinIO、Go、Python Runtime 和 Vue。
 - [ ] 默认 `make test` 不访问 Claude API。
 - [ ] `make test-integration` 使用真实 PostgreSQL/MinIO 并通过。
-- [ ] `make test-e2e` 使用 Fake Runtime 跑通完整用户链路。
+- [ ] `make test-e2e` 使用 Fake SandboxProvider 跑通完整用户链路。
 - [ ] `make smoke-claude` 仅在显式配置 credential 时运行。
 - [ ] 同一 Project 可创建多个独立 Conversation，并共享 Input File。
 - [ ] 成功 Run 使用 SDK Session fork + commit；失败 Run abort，不污染 active context。
 - [ ] Control Plane/Runtime 崩溃后先协调 execution，再启动 scheduler。
+- [ ] Docker 与 Fake 都通过同一 SandboxProvider contract；Run Coordinator 不导入 Docker/E2B 细节。
+- [ ] `finalized_at` 只在 Runtime disposition 和 Lease release 都完成后写入；release 失败不会重跑 Agent。
 - [ ] Artifact 只有已提交元数据时可见，HTML 在隔离 iframe 中展示。
 - [ ] 逻辑删除和 `purge-deleted` 满足幂等顺序。
 - [ ] Git 工作区干净，提交粒度与 Task 对齐。

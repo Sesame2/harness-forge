@@ -96,6 +96,12 @@ An immutable, independently viewable output published by a successful Run. A Run
 **Workspace**:
 An ephemeral filesystem directory materialized for a single Run. Avoid `Project Workspace`.
 
+**Sandbox**:
+The execution environment that hosts the Python Agent Runtime and a Run Workspace. The real V0 Sandbox is the long-lived Runtime container in Docker Compose; the Fake Sandbox exists only for deterministic tests.
+
+**Sandbox Lease**:
+A Run-scoped execution-environment handle acquired by the Control Plane. It exposes the Runtime protocol client, Sandbox-local paths, output synchronization, and idempotent release without exposing Docker or future E2B SDK details to the Run Coordinator.
+
 ## 5. System Architecture
 
 ```mermaid
@@ -103,7 +109,8 @@ flowchart LR
     UI["Vue 3 Web<br/>Conversations + Chat + Artifacts"] -->|"REST + SSE"| CP["Go Control Plane<br/>modular monolith"]
     CP --> PG[("PostgreSQL<br/>product state")]
     CP --> S3[("MinIO / S3<br/>inputs + Artifacts")]
-    CP -->|"internal HTTP + NDJSON"| RT["Python Agent Runtime<br/>long-lived Docker container"]
+    CP --> SP["SandboxProvider<br/>Docker / Fake"]
+    SP -->|"Lease + internal HTTP/NDJSON"| RT["Python Agent Runtime<br/>long-lived Docker container"]
     RT -->|"Claude Agent SDK"| CL["Claude API / Base URL"]
     CP --> WV[("run-workspaces volume")]
     RT --> WV
@@ -135,7 +142,8 @@ The Go module is the sole authority for product state. It owns:
 - Global concurrency of one.
 - Materializing Input Files into Run workspaces.
 - Resolving a Profile file into an immutable configuration snapshot and digest for each Run.
-- Calling and cancelling Agent Runtime executions.
+- Acquiring, recovering, and releasing Run-scoped Leases through `SandboxProvider`.
+- Calling, cancelling, and finalizing Agent Runtime executions through a Lease, and synchronizing remote outputs before publication.
 - Mapping Runtime events to durable Run Events and browser SSE.
 - Publishing validated Artifact files to MinIO.
 - Serving Artifact files through a separate HTTP listener.
@@ -164,15 +172,26 @@ PostgreSQL stores product metadata and the durable FIFO queue. The minimum logic
 
 | Record | Important information |
 |---|---|
-| `projects` | ID, name, Profile ID/version, timestamps |
+| `projects` | ID, name, Profile ID/version, timestamps, logical deletion time |
 | `input_files` | Project ID, display name, media type, size, digest, object key |
 | `conversations` | Project ID, title, active SDK Session ID, timestamps, logical deletion time |
 | `messages` | Conversation ID, role, content, timestamp |
-| `runs` | Conversation ID, trigger Message ID, status, phase, SDK Session IDs, error, `finalized_at`, timestamps |
+| `runs` | Conversation ID, trigger Message ID, status, phase, SDK Session IDs, `sandbox_provider`, `sandbox_ref`, error, `finalized_at`, timestamps |
 | `run_events` | Run ID, monotonic sequence, event type, payload, timestamp |
 | `artifacts` | Run ID, title, type, entry path, object prefix, primary flag, manifest version |
 
 Product history never has to be reconstructed from SDK transcript files.
+
+Sandbox columns have these exact states:
+
+| `sandbox_provider` | `sandbox_ref` | Run state | Meaning |
+|---|---|---|---|
+| null | null | any | Sandbox acquisition has not started |
+| non-null | null | running/unfinalized terminal | Acquire is pending or its outcome is uncertain |
+| non-null | null | finalized terminal | Acquire definitively created no Lease |
+| non-null | non-null | unfinalized | Lease exists and still requires disposition and/or release |
+| non-null | non-null | finalized | Lease was released; values remain as audit/recovery metadata |
+| null | non-null | any | Invalid database state |
 
 ### 5.5 MinIO/S3
 
@@ -228,6 +247,7 @@ harness-forge/
 │   │   │   ├── artifacts/
 │   │   │   ├── profiles/
 │   │   │   ├── agentexec/
+│   │   │   ├── sandbox/
 │   │   │   ├── httpapi/
 │   │   │   ├── artifacthttp/
 │   │   │   ├── postgres/
@@ -290,7 +310,7 @@ harness-forge/
 └── README.md
 ```
 
-The layout intentionally excludes `plugins/`, a cross-language `shared/` directory, a generic Go `pkg/`, multiple Go processes, and speculative repository interfaces. The only mandatory execution seam is `agentexec`, because both HTTP Runtime and Fake Runtime adapters exist from V0.
+The layout intentionally excludes `plugins/`, a cross-language `shared/` directory, a generic Go `pkg/`, multiple Go processes, and speculative repository interfaces. `agentexec` only encapsulates the stable Runtime HTTP/NDJSON protocol. `sandbox` is the outer execution-environment seam and has Docker and Fake providers in V0. An E2B adapter, E2B SDK dependency, remote persistent volumes, pooling, and per-Project/Profile/Run provider selection are explicitly outside V0.
 
 ## 7. Interfaces
 
@@ -310,9 +330,43 @@ The exact resource shapes belong in `control-plane.openapi.yaml`. The V0 require
 
 Project and Conversation deletion are logical in V0: the record receives `deleted_at` and disappears from default queries. A delete request is rejected with `409 Conflict` while the target Project or Conversation has a `queued`, `running`, or not-yet-finalized Run; the user must cancel it or wait for finalization first. A logically deleted Project or Conversation cannot accept new Messages, Runs, or late Session promotion.
 
-No object, Workspace, or SDK Session is physically removed during the delete request. An explicit, idempotent `make purge-deleted` maintenance command performs physical cleanup in this order: delete owned MinIO prefixes, ask the Runtime to delete owned SDK Sessions, remove retained Run Workspaces, delete terminal Runtime execution tombstones, then hard-delete PostgreSQL records last. Missing external objects, Sessions, Workspaces, and tombstones count as success, so a crash can be handled by rerunning the command. Purging a Conversation never removes Project Input Files shared with other Conversations; purging a Project owns all of its children.
+No object, Workspace, or SDK Session is physically removed during the delete request. An explicit, idempotent `make purge-deleted` maintenance command performs physical cleanup in this order: delete owned MinIO prefixes; use the Run's recorded Provider/ref when Runtime cleanup is still required; delete owned SDK Sessions; remove retained Run Workspaces; delete terminal Runtime execution tombstones; idempotently release the Lease; then hard-delete PostgreSQL records last. Missing Sandboxes, objects, Sessions, Workspaces, and tombstones count as success, so a crash can be handled by rerunning the command. Purging a Conversation never removes Project Input Files shared with other Conversations; purging a Project owns all of its children.
 
-### 7.2 Internal Runtime interface
+### 7.2 SandboxProvider interface
+
+The deployment selects one Provider globally through `SANDBOX_PROVIDER=docker|fake`; V0 does not select a Provider per Project, Profile, or Run. The composition root constructs one Provider and the Run Coordinator depends only on this deep interface:
+
+```go
+type Provider interface {
+    Acquire(context.Context, AcquireRequest) (Lease, error)
+    Recover(context.Context, RecoverRequest) (Lease, error)
+    List(context.Context) ([]LeaseInfo, error)
+}
+
+type Lease interface {
+    Ref() string
+    Runtime() agentexec.Executor
+    Paths() agentexec.Paths
+    SyncBack(context.Context) error
+    Release(context.Context) error
+}
+```
+
+The interface invariants are:
+
+- `Acquire` uses `run_id` as its idempotency key. A repeated call returns the same logical Sandbox and never launches a second environment.
+- `Recover` only opens the environment named by `sandbox_ref`; it never creates a replacement and returns a classifiable not-found error when absent.
+- `List` authoritatively returns every externally materialized Sandbox resource owned and reconcilable by this Provider, including each `run_id` and `sandbox_ref`; it is the recovery source when `Acquire` may have succeeded but its acknowledgement was lost. A Provider such as Docker whose `Acquire` allocates no per-Run external resource does not invent an entry until Runtime state exists.
+- `Paths` returns absolute input/workspace/output paths visible to the Runtime. The Run Coordinator never constructs container paths.
+- `SyncBack` copies Sandbox outputs into the Go-owned local Run Workspace. It is an idempotent no-op for Docker and Fake because they use local shared directories.
+- `Release` is idempotent and is called only after Runtime `finalize(commit|abort)`, or after the Runtime has confirmed that execution state was never created.
+- A successful Run must complete `SyncBack` before Artifact validation and publication. Failure and cancellation paths may make a best-effort diagnostic sync, but a sync error never replaces the original error.
+
+Go always creates and retains the local Run Workspace first. The Docker Provider connects to the long-lived Compose Runtime, returns a fixed logical Lease, and maps local paths to shared `/workspaces/{run_id}` paths; it does not create one container per Run. The Fake Provider returns a local fixture-backed Lease. Both implementations run through the same provider contract test suite.
+
+A future E2B Provider may internally create or pool Sandboxes, upload the Workspace, start the same Python Runtime, wait for health, return an HTTP executor targeting the remote Runtime, download outputs, and then release the Sandbox. It must preserve the existing SDK Session fork/finalize semantics. The remote Session persistence mechanism is deliberately deferred until E2B is implemented.
+
+### 7.3 Internal Runtime interface
 
 The Runtime exposes a private HTTP interface:
 
@@ -340,11 +394,13 @@ It does not contain database credentials, object-storage credentials, or raw bro
 
 Each NDJSON Runtime Event has a version, Run ID, Runtime-local sequence, type, timestamp, and typed payload. Go assigns the durable Run Event sequence before persistence. Raw SDK objects never cross this interface.
 
-`run_id` is the idempotency key for Runtime execution operations. Repeating `execute` never launches another worker: an active duplicate returns `409 Conflict` with `already_running`, while an already finalized Run returns its recorded disposition. Attempting to execute a different Run while one is active also returns `409 Conflict`. `GET /v1/executions` reports the Runtime's active and unfinalized execution records for startup reconciliation, and `HEAD /v1/sessions/{session_id}` verifies that a promoted Session still exists.
+`run_id` is the idempotency key for Runtime execution operations. Repeating `execute` never launches another worker: an active duplicate returns `409 Conflict` with `already_running`; a completed execution awaiting a decision returns `409 Conflict` with `awaiting_finalize`; an already finalized Run returns its recorded disposition. Attempting to execute a different Run while one is active also returns `409 Conflict`. `GET /v1/executions` reports the Runtime's starting, active, and awaiting-finalize execution records for startup reconciliation, and `HEAD /v1/sessions/{session_id}` verifies that a promoted Session still exists.
+
+If the `execute` response is lost after the Runtime may have accepted the Run, Go must not infer that no execution exists and must not release the Lease. The Run remains unfinalized. Reconciliation recovers the Lease and checks `GET /v1/executions`: if a record exists it cancels when active, chooses the required `finalize` decision, and only then releases; only an authoritative absence permits release without finalize.
 
 The Runtime writes the candidate SDK Session and its execution record durably to `runtime-sessions` before emitting `agent.completed`. That event contains `candidate_sdk_session_id` and the validated Artifact candidate summary. After Go finishes product-state publication, it calls `finalize(commit)` to retain the candidate Session and atomically replace the execution record with a compact committed tombstone. On failure, cancellation, or rejected publication, Go calls `finalize(abort)`, which deletes the candidate Session and writes an aborted tombstone. Both decisions are idempotent; a later contradictory decision is rejected. Tombstones prevent a duplicate `execute(run_id)` from launching another worker. `DELETE /v1/executions/{run_id}` idempotently removes a terminal tombstone, returns success when it is already absent, and rejects active or unfinalized executions.
 
-### 7.3 Runtime event vocabulary
+### 7.4 Runtime event vocabulary
 
 The initial normalized event set is intentionally small:
 
@@ -363,7 +419,7 @@ New event types require a contract versioning decision. Consumers must ignore un
 
 Runtime-owned `agent.*` events describe only Claude execution. Go persists selected assistant, tool, and phase events for the browser, but it alone emits product terminal events such as `run.succeeded`, `run.failed`, `run.cancelled`, and `artifact.published` after product-state transitions complete.
 
-### 7.4 Artifact manifest
+### 7.5 Artifact manifest
 
 An output directory may contain zero or more publishable Artifacts. When it contains publishable output, `artifact-manifest.json` is required.
 
@@ -417,10 +473,11 @@ While `running`, a separate phase is one of `preparing`, `agent`, or `publishing
 - Queued Runs survive a Go restart.
 - The Runtime independently rejects a second active execution, so a Control Plane error cannot exceed global concurrency.
 - Go does not claim the next queued Run until the current Run has a non-null `finalized_at`.
-- Before enabling its scheduler, Go calls `GET /v1/executions` and performs startup reconciliation.
-- Every Runtime execution corresponding to a PostgreSQL `running` Run is cancelled and confirmed inactive before that Run becomes `interrupted`.
-- A Runtime execution with no matching PostgreSQL `running` Run is an orphan and is cancelled, then finalized with `abort`.
-- A PostgreSQL `running` Run with no Runtime execution becomes `interrupted` immediately.
+- Before enabling its scheduler, Go calls Provider `List`, then reconciles PostgreSQL unfinalized Runs with Leases and Runtime executions.
+- Before calling `Acquire`, Go records the selected `sandbox_provider`; after success it records `sandbox_ref`. The table in §5.4 defines the nullable states. `SANDBOX_PROVIDER` is not a state-migration mechanism: if it differs from any retained Run's recorded provider, startup remains paused with an actionable error. V0 requires purging/resetting that data under the old Provider before switching; cross-Provider SDK Session migration is deferred.
+- Every Runtime execution corresponding to a PostgreSQL `running` Run is recovered through its Lease, cancelled, and confirmed inactive before that Run becomes `interrupted`.
+- A Provider Lease or Runtime execution with no matching PostgreSQL Run is an orphan and is cancelled, finalized with `abort`, and released.
+- A PostgreSQL `running` Run whose Sandbox cannot be recovered and has no Runtime execution becomes `interrupted`; it is finalized only after Go confirms that no resource still requires release.
 - If the Runtime HTTP server restarts inside its container, it terminates any worker process group recorded by its local execution record before reporting healthy.
 - The scheduler starts only after reconciliation reports no active worker.
 - No automatic retry occurs.
@@ -435,12 +492,12 @@ Every Run starts from an isolated SDK Session branch:
 4. The Run executes against that candidate Session.
 5. `agent.completed` is emitted only after the candidate transcript is durable and includes its ID.
 6. Go uploads Artifact objects and commits Artifact metadata, the Conversation's new active Session pointer, and `succeeded` Run status in one PostgreSQL transaction.
-7. Go then calls `finalize(commit)`; this is safe to repeat after a crash, and on acknowledgement Go records `finalized_at`.
-8. On failure or cancellation, Go calls `finalize(abort)` and the previous active Session remains unchanged.
+7. Go then calls `finalize(commit)`; this is safe to repeat after a crash. On acknowledgement it calls `Release`; only release acknowledgement permits recording `finalized_at`.
+8. On failure or cancellation, Go calls `finalize(abort)`, then `Release`; the previous active Session remains unchanged and `finalized_at` remains null until both steps complete.
 
 This gives Conversation context the same commit-on-success behavior as Artifact publication.
 
-If Go crashes after the PostgreSQL commit but before `finalize(commit)`, startup reconciliation sees that the candidate ID equals the Conversation's active Session pointer and repeats `commit`. If `commit` completed but `finalized_at` did not, Go verifies the Session through `HEAD`, records `finalized_at`, and continues. If the Run is not succeeded or the candidate was not promoted, reconciliation chooses `abort`. Candidate Sessions never become active based solely on Runtime state.
+If Go crashes after the PostgreSQL commit but before `finalize(commit)`, startup reconciliation sees that the candidate ID equals the Conversation's active Session pointer and repeats `commit`, verifies the Session through `HEAD`, and releases the Lease before recording `finalized_at`. If commit or release completed but `finalized_at` did not, the same idempotent sequence is repeated. If the Run is not succeeded or the candidate was not promoted, reconciliation chooses `abort`, then releases. Candidate Sessions never become active based solely on Runtime state.
 
 ### 8.4 Cancellation
 
@@ -451,19 +508,25 @@ If Go crashes after the PostgreSQL commit but before `finalize(commit)`, startup
 
 ### 8.5 Terminal finalization
 
-`finalized_at` means that all Runtime disposition work required by the Run has completed, or that the Run never created Runtime state. Product terminal `run.*` events are emitted only after this field is set.
+`finalized_at` means that all Runtime disposition work required by the Run has completed and its Sandbox Lease has been released, or that the Run never acquired a Lease. Product terminal `run.*` events are emitted only after this field is set.
 
 | Terminal path | Run status | Runtime disposition | When `finalized_at` is set |
 |---|---|---|---|
 | Cancelled while queued | `cancelled` | None; execution never started | In the same PostgreSQL transaction as cancellation |
-| Failed during preparation before `execute` is accepted | `failed` | None | In the same PostgreSQL transaction as failure |
-| Agent or Runtime failure after an execution record exists | `failed` | `finalize(abort)` | After abort acknowledgement |
-| Artifact validation or publication failure | `failed` | `finalize(abort)` | After abort acknowledgement |
-| Cancelled during Agent execution | `cancelled` | cancel worker, then `finalize(abort)` | After abort acknowledgement |
-| Reconciled after Control Plane restart | `interrupted` | cancel if active, then `finalize(abort)`; none if no Runtime record exists | After abort acknowledgement, or immediately when no Runtime state exists |
-| Successful execution and publication | `succeeded` | `finalize(commit)` | After commit acknowledgement |
+| Failed during preparation before a Lease is acquired | `failed` | None | In the same PostgreSQL transaction as failure |
+| Sandbox acquisition definitely failed without creating a Lease | `failed` | None | In the same PostgreSQL transaction as failure |
+| Lease acquired but `execute` created no Runtime state | `failed` | `Release` only | After release acknowledgement |
+| Agent or Runtime failure after an execution record exists | `failed` | `finalize(abort)` + `Release` | After abort and release acknowledgement |
+| Artifact validation or publication failure | `failed` | `finalize(abort)` + `Release` | After abort and release acknowledgement |
+| Cancelled during Agent execution | `cancelled` | cancel worker, then `finalize(abort)` + `Release` | After abort and release acknowledgement |
+| Reconciled after Control Plane restart | `interrupted` | abort Runtime state when present; release any Lease | After disposition and release acknowledgement, or immediately when neither exists |
+| Successful execution and publication | `succeeded` | `finalize(commit)` + `Release` | After commit and release acknowledgement |
 
-If the Runtime is temporarily unavailable while a disposition is required, the Run may already have a terminal status but remains unfinalized. The scheduler and deletion operations stay paused until startup or periodic reconciliation completes the idempotent disposition and writes `finalized_at`.
+If the Runtime is temporarily unavailable or Provider release fails, the Run may already have a terminal status but remains unfinalized. The scheduler and deletion operations stay paused until startup or periodic reconciliation completes the idempotent disposition and release. Release failure never rolls back committed product state and never causes the Run to execute again.
+
+An ambiguous `Acquire` failure is not treated as proof that no Lease exists. The Run remains unfinalized while reconciliation uses Provider `List` and the `run_id` idempotency key to discover or conclusively rule out an acquired Sandbox.
+
+An ambiguous `execute` failure follows the same rule: reconciliation must recover the Lease and inspect Runtime executions. A matching record is cancelled/finalized before release; only an authoritative absence allows release-only finalization.
 
 ## 9. Data Flow
 
@@ -474,15 +537,15 @@ If the Runtime is temporarily unavailable while a disposition is required, the R
 5. The browser subscribes to Run SSE.
 6. The scheduler claims the oldest queued Run.
 7. Go creates the Run Workspace, copies the resolved Profile Workspace template, and materializes every non-deleted Input File owned by the Project.
-8. Go calls the Runtime execution interface.
-9. The Runtime durably records the execution, forks or creates a candidate SDK Session, invokes Claude in a worker subprocess, and streams normalized events.
+8. Go persists the selected Provider, calls `SandboxProvider.Acquire(run_id)`, persists the returned ref, and builds the Runtime request using Lease paths.
+9. Go executes through `Lease.Runtime()`. The Runtime durably records the execution, forks or creates a candidate SDK Session, invokes Claude in a worker subprocess, and streams normalized events.
 10. Go persists important events with monotonically increasing sequence numbers and relays them over SSE.
-11. Claude writes candidate files and `artifact-manifest.json` below the output directory.
+11. Claude writes candidate files and `artifact-manifest.json` below the Sandbox output directory.
 12. The Runtime validates the manifest and filesystem paths, then emits `agent.completed` with the durable candidate Session ID and candidate summary.
-13. Go allocates Artifact IDs and uploads files directly to their final immutable object prefixes; they remain invisible because no committed metadata references them.
+13. Go calls `Lease.SyncBack`, validates the Manifest from the local Workspace, allocates Artifact IDs, and uploads files directly to their final immutable object prefixes; they remain invisible because no committed metadata references them.
 14. Go commits Artifact metadata, promotes the candidate SDK Session pointer, and marks the Run `succeeded` in one PostgreSQL transaction.
-15. Go calls the Runtime's idempotent `finalize(commit)` operation and records `finalized_at`; it does not claim another Run before this succeeds or is reconciled.
-16. Go emits `artifact.published` and `run.succeeded`; the browser opens the primary Artifact through the Artifact Gateway.
+15. Go calls the Runtime's idempotent `finalize(commit)` operation, then calls `Lease.Release`.
+16. Go records `finalized_at` and emits `artifact.published` and `run.succeeded`; the browser opens the primary Artifact through the Artifact Gateway.
 
 Browser SSE disconnection does not cancel a Run. The browser resumes by sending the last durable Run Event sequence it received.
 
@@ -493,6 +556,9 @@ The product error vocabulary is limited to:
 ```text
 invalid_input
 runtime_unavailable
+sandbox_acquire_failed
+sandbox_sync_failed
+sandbox_release_failed
 agent_failed
 agent_timeout
 manifest_invalid
@@ -509,7 +575,7 @@ Rules:
 - Object upload failure leaves a partially written but unreachable final prefix and performs best-effort cleanup.
 - Database failure after object upload leaves an unreachable orphan prefix for the idempotent cleanup command.
 - A candidate SDK Session is never promoted unless the Run's success transaction commits.
-- Startup reconciliation resolves every unfinalized Runtime execution before another Run can start.
+- Startup reconciliation resolves every unfinalized Runtime execution and Sandbox Lease before another Run can start.
 - A failed Workspace is retained for local diagnosis until an explicit cleanup command removes it.
 - The UI continues showing the latest successful Artifact when the current Run fails.
 
@@ -568,7 +634,7 @@ The fixed Runtime image contains Python and version-locked packages such as pand
 
 ### 14.1 Module tests
 
-- Go: Run state transitions, FIFO claim behavior, SSE event replay, Artifact publication invariants.
+- Go: Run state transitions, FIFO claim behavior, SSE event replay, Artifact publication invariants, and the shared SandboxProvider contract suite.
 - Python: SDK event normalization, Session fork/resume parameters, Workspace path validation, Manifest validation.
 - Vue: Conversation state, SSE reconnection, Artifact version selection, and error presentation.
 
@@ -578,7 +644,10 @@ The fixed Runtime image contains Python and version-locked packages such as pand
 - Verify transactional Message/Run creation.
 - Verify durable queue claiming and restart handling.
 - Verify metadata-gated Artifact visibility, orphan cleanup, and publication failure behavior.
-- Verify Go-to-Fake-Runtime NDJSON streaming.
+- Verify Go-to-Fake-Runtime NDJSON streaming through the Fake SandboxProvider.
+- Verify Docker and Fake providers both satisfy Acquire idempotency, non-creating Recover, path ownership, SyncBack, and idempotent Release.
+- Table-drive the complete terminal finalization matrix, including ambiguous acquire/execute outcomes and release failure.
+- Cover crashes before and after finalize acknowledgement, release acknowledgement, and terminal-event persistence, plus idempotent tombstone deletion.
 
 ### 14.3 Browser end-to-end test
 
@@ -604,7 +673,7 @@ create Project
 ### Phase 1: Walking skeleton
 
 - Repository shell and `docker-compose.yaml`.
-- PostgreSQL, MinIO, Go, Vue, and Fake Runtime startup.
+- PostgreSQL, MinIO, Go, Vue, Docker/Fake SandboxProvider, and Fake Runtime startup.
 - Versioned contracts.
 - Minimum Project, Conversation, Message, and Run model.
 - Fixed HTML publication and iframe preview.
@@ -637,9 +706,9 @@ create Project
 |---|---|
 | A second Profile has conflicting dependencies | Profile-selectable Runtime images |
 | Untrusted inputs or multiple users | Per-Run containers, egress policy, authentication, tenant isolation |
-| Real concurrent usage | Worker process, leases, configurable concurrency and quotas |
+| Real concurrent usage | Independent Go worker processes, database claim leases, configurable concurrency and quotas; these are distinct from Sandbox Leases |
 | Agent must pause for user decisions | WebSocket transport and HITL states |
-| Runtime moves to another host | Workspace transfer protocol and remote Executor adapter |
+| Managed, elastic, or remotely isolated execution is needed | Implement the E2B SandboxProvider, including Workspace transfer and a Session persistence decision |
 | Artifacts must mutate product state | Restricted Artifact interface with scoped capability tokens |
 | Operational diagnosis outgrows logs | OpenTelemetry and metrics stack |
 
@@ -652,6 +721,7 @@ create Project
 | Failed Run contaminates future context | SDK Session fork and promote-on-success |
 | Generated HTML attacks the product UI | Separate listener, sandboxed iframe, CSP, no product credentials |
 | Shared Runtime container leaks across Runs | Accepted trusted-local model, single concurrency, separate work directories |
+| Provider seam becomes prematurely generic | Expose only Acquire/Recover/List and the Lease operations required by Runs; no generic shell/filesystem API or E2B dependency in V0 |
 | Unrestricted Runtime network allows data egress | Explicitly out of V0 security scope; revisit before untrusted use |
 | PostgreSQL and MinIO are heavy for a personal prototype | Deliberately accepted because infrastructure practice is a project goal |
 | Local SDK sessions and Workspaces grow indefinitely | Explicit cleanup commands; no premature background retention service |

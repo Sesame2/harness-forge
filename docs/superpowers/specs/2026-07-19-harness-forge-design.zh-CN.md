@@ -96,6 +96,12 @@ Run 执行期间追加产生的文字、工具、阶段和诊断事件。
 **Workspace**：
 只服务单个 Run 的临时文件系统目录，不称为 Project Workspace。
 
+**Sandbox**：
+承载 Python Agent Runtime 与 Run Workspace 的执行环境。V0 的真实 Sandbox 是 Docker Compose 中的常驻 Runtime 容器；Fake Sandbox 只用于确定性测试。
+
+**Sandbox Lease**：
+Control Plane 为一个 Run 获取的执行环境句柄。它暴露 Runtime 协议客户端、Sandbox 内路径、输出同步与幂等释放；不向 Run Coordinator 暴露 Docker 或未来 E2B SDK。
+
 ## 5. 总体架构
 
 ```mermaid
@@ -103,7 +109,8 @@ flowchart LR
     UI["Vue 3 Web<br/>会话、聊天、制品"] -->|"REST + SSE"| CP["Go Control Plane<br/>模块化单体"]
     CP --> PG[("PostgreSQL<br/>产品状态")]
     CP --> S3[("MinIO / S3<br/>输入与制品")]
-    CP -->|"内部 HTTP + NDJSON"| RT["Python Agent Runtime<br/>常驻 Docker 容器"]
+    CP --> SP["SandboxProvider<br/>Docker / Fake"]
+    SP -->|"Lease + 内部 HTTP/NDJSON"| RT["Python Agent Runtime<br/>常驻 Docker 容器"]
     RT -->|"Claude Agent SDK"| CL["Claude API / Base URL"]
     CP --> WV[("run-workspaces Volume")]
     RT --> WV
@@ -135,7 +142,8 @@ Go 是产品状态的唯一权威，负责：
 - 全局并发度 1。
 - 将 Profile 文件解析为不可变配置快照和 digest。
 - 将 Input File 和 Profile Workspace 模板准备到 Run Workspace。
-- 调用、取消和收尾 Agent Runtime execution。
+- 通过 `SandboxProvider` 获取、恢复和释放 Run-scoped Lease。
+- 通过 Lease 调用、取消和收尾 Agent Runtime execution，并在发布前同步远端输出。
 - 将 Runtime Event 转换为持久 Run Event 和浏览器 SSE。
 - 将已校验 Artifact 上传到 MinIO。
 - 通过第二个 HTTP listener 提供 Artifact 内容。
@@ -169,9 +177,20 @@ Runtime 不连接 PostgreSQL 或 MinIO，也不是产品历史的数据源。
 | `input_files` | Project ID、显示名、媒体类型、大小、digest、object key |
 | `conversations` | Project ID、标题、active SDK Session ID、时间戳、`deleted_at` |
 | `messages` | Conversation ID、role、content、时间戳 |
-| `runs` | Conversation ID、触发 Message ID、status、phase、SDK Session IDs、error、`finalized_at`、时间戳 |
+| `runs` | Conversation ID、触发 Message ID、status、phase、SDK Session IDs、`sandbox_provider`、`sandbox_ref`、error、`finalized_at`、时间戳 |
 | `run_events` | Run ID、单调递增 sequence、type、payload、时间戳 |
 | `artifacts` | Run ID、标题、type、entry path、object prefix、primary、manifest version |
+
+Sandbox 字段状态固定为：
+
+| `sandbox_provider` | `sandbox_ref` | Run 状态 | 含义 |
+|---|---|---|---|
+| null | null | 任意 | 尚未开始获取 Sandbox |
+| 非 null | null | running / 未 finalized 终态 | Acquire 进行中或结果不确定 |
+| 非 null | null | 已 finalized 终态 | 已明确确认 Acquire 未创建 Lease |
+| 非 null | 非 null | 未 finalized | Lease 已存在，仍需 disposition 和/或 release |
+| 非 null | 非 null | 已 finalized | Lease 已 release；字段作为审计/恢复元数据保留 |
+| null | 非 null | 任意 | 非法数据库状态 |
 
 产品历史永远不从 SDK transcript 重建。
 
@@ -222,6 +241,7 @@ harness-forge/
 │   │   │   ├── artifacts/
 │   │   │   ├── profiles/
 │   │   │   ├── agentexec/
+│   │   │   ├── sandbox/
 │   │   │   ├── httpapi/
 │   │   │   ├── artifacthttp/
 │   │   │   ├── postgres/
@@ -267,7 +287,7 @@ harness-forge/
 └── README.md
 ```
 
-V0 不创建 `plugins/`、跨语言 `shared/`、通用 Go `pkg/`、多个 Go 进程或为每张表建立 Repository interface。`agentexec` 是必要 seam，因为 V0 同时存在 HTTP Runtime 和 Fake Runtime adapter。
+V0 不创建 `plugins/`、跨语言 `shared/`、通用 Go `pkg/`、多个 Go 进程或为每张表建立 Repository interface。`agentexec` 只封装稳定的 Runtime HTTP/NDJSON 协议；`sandbox` 是外层执行环境 seam，V0 实现 Docker 与 Fake Provider。E2B adapter、SDK 依赖、远端持久卷、池化和按 Project/Profile/Run 动态选 Provider 均不在 V0 中。
 
 ## 7. 跨进程接口
 
@@ -290,14 +310,49 @@ Project 和 Conversation 删除都是逻辑删除。若目标下存在 `queued`�
 删除请求不直接清理外部资源。幂等命令 `make purge-deleted` 按以下顺序清理：
 
 1. 删除归属的 MinIO 前缀。
-2. 请求 Runtime 删除归属 SDK Session。
-3. 删除保留的 Run Workspace。
-4. 删除终态 Runtime execution tombstone。
-5. 最后硬删除 PostgreSQL 记录。
+2. 需要 Runtime 清理时，用 Run 记录的 Provider/ref 恢复访问。
+3. 请求 Runtime 删除归属 SDK Session。
+4. 删除保留的 Run Workspace。
+5. 删除终态 Runtime execution tombstone并幂等 Release Lease。
+6. 最后硬删除 PostgreSQL 记录。
 
-外部对象已经不存在视为成功，因此命令崩溃后可重跑。清理 Conversation 不删除 Project 共享 Input File；清理 Project 拥有所有子记录。
+清理需要 Runtime 时，使用 Run 已记录的 Provider/ref 恢复访问；删除 execution tombstone 后再幂等 Release Lease，最后才硬删除 PostgreSQL。Sandbox、外部对象、Session、Workspace 或 tombstone 已不存在都视为成功，因此命令崩溃后可重跑。清理 Conversation 不删除 Project 共享 Input File；清理 Project 拥有所有子记录。
 
-### 7.2 Runtime HTTP 接口
+### 7.2 SandboxProvider 接口
+
+Provider 在部署启动时由 `SANDBOX_PROVIDER=docker|fake` 全局选择；V0 不允许按 Project、Profile 或 Run 动态切换。组合根创建唯一 Provider，Run Coordinator 只依赖下列深接口：
+
+```go
+type Provider interface {
+    Acquire(context.Context, AcquireRequest) (Lease, error)
+    Recover(context.Context, RecoverRequest) (Lease, error)
+    List(context.Context) ([]LeaseInfo, error)
+}
+
+type Lease interface {
+    Ref() string
+    Runtime() agentexec.Executor
+    Paths() agentexec.Paths
+    SyncBack(context.Context) error
+    Release(context.Context) error
+}
+```
+
+接口不变量：
+
+- `Acquire` 以 `run_id` 为幂等键；重复调用必须返回同一个逻辑 Sandbox，不能启动第二份执行环境。
+- `Recover` 只恢复 `sandbox_ref` 指向的既有环境，不得隐式新建；不存在时返回可分类的 not-found error。
+- `List` 权威返回本 Provider 已物化、需要协调的所有外部 Sandbox 资源，并携带 `run_id` 与 `sandbox_ref`；当 Acquire 可能成功但 acknowledgement 丢失时，它是恢复依据。Docker 这类 Acquire 不分配每 Run 外部资源的 Provider，不必在 Runtime state 出现前虚构条目。
+- `Paths` 返回 Runtime 可见的绝对 input/workspace/output 路径；Run Coordinator 不拼接容器路径。
+- `SyncBack` 只把 Sandbox 输出同步回 Go 管理的本地 Run Workspace；Docker/Fake 因共享本地目录而幂等 no-op。
+- `Release` 幂等，且只能在 Runtime `finalize(commit|abort)` 之后调用；若 Runtime 明确确认从未创建 execution state，则可直接 Release。
+- 成功 Run 必须完成 `SyncBack` 后才进入 Artifact 校验和发布；失败/取消只做 best-effort 诊断同步，不能覆盖原始错误。
+
+Go 总是先创建并保留本地 Run Workspace。Docker Provider 连接 Compose 中的常驻 Runtime，以固定逻辑引用返回 Lease，并将本地路径映射到共享 `/workspaces/{run_id}`；它不为每个 Run 创建容器。Fake Provider 返回使用 fixture 的本地 Lease。两者都满足同一 contract test suite。
+
+未来 E2B Provider 可以在内部创建或池化 Sandbox、上传 Workspace、启动同一个 Python Runtime、等待 health、返回指向远端 Runtime 的 HTTP executor、下载 outputs，再释放 Sandbox。它仍须保持当前 SDK Session fork/finalize 语义；具体远端 Session 存储方案在实现 E2B 时决定，本规格不预设。
+
+### 7.3 Runtime HTTP 接口
 
 ```text
 GET    /health
@@ -321,7 +376,11 @@ DELETE /v1/sessions/{session_id}
 
 请求不包含数据库、对象存储或浏览器认证信息。
 
-`run_id` 是 Runtime execution 幂等键。重复 execute 不会启动第二个 worker：active duplicate 返回 `409 already_running`；已 finalized 的 Run 返回已记录 disposition。Runtime 同一时刻只接受一个 active Run。
+`run_id` 是 Runtime execution 幂等键。重复 execute 不会启动第二个 worker：active duplicate 返回 `409 already_running`；已完成但等待 decision 时返回 `409 awaiting_finalize`；已 finalized 的 Run 返回已记录 disposition。Runtime 同一时刻只接受一个 active Run。
+
+`GET /v1/executions` 返回 starting、active 和 awaiting-finalize execution record，用于启动协调。`HEAD /v1/sessions/{session_id}` 验证已提升 Session 仍存在。
+
+若 Runtime 可能已接受 Run 后 `execute` response 丢失，Go 不得推断 execution 不存在，也不得直接 Release Lease。Run 保持 unfinalized；协调流程 Recover Lease 并查询 `GET /v1/executions`：有 record 时，active 先 cancel，再执行所需 finalize，最后 Release；只有权威确认不存在 record 才能不 finalize 而直接 Release。
 
 Runtime 在发出 `agent.completed` 之前，必须把候选 SDK Session 和 execution record 持久化。`agent.completed` 携带 `candidate_sdk_session_id` 与已经校验的 Artifact candidate 摘要。
 
@@ -329,7 +388,7 @@ Go 完成产品事务后调用 `finalize(commit)`：Runtime 保留候选 Session
 
 `DELETE /v1/executions/{run_id}` 只删除终态 tombstone；不存在时也成功，active 或 unfinalized execution 则拒绝。
 
-### 7.3 Runtime Event
+### 7.4 Runtime Event
 
 每个 NDJSON event 包含版本、Run ID、Runtime 本地 sequence、type、timestamp 和类型化 payload。Go 在持久化时分配产品 Run Event sequence。
 
@@ -357,7 +416,7 @@ artifact.published
 
 同一兼容版本中，消费者必须忽略未知的非终态 event。
 
-### 7.4 Artifact Manifest
+### 7.5 Artifact Manifest
 
 有可发布输出时，`outputs/artifact-manifest.json` 必须存在。
 
@@ -406,10 +465,11 @@ queued          -> cancelled
 - Go 同时只领取一个 queued Run。
 - Runtime 也独立拒绝第二个 active execution。
 - Go 不会在当前 Run 写入 `finalized_at` 前领取下一项。
-- Go 启动时必须先调用 `GET /v1/executions`，完成协调后才启动 scheduler。
-- PostgreSQL `running` 且 Runtime 有 active execution：先取消并确认停止，再标记 `interrupted`。
-- Runtime 有 execution 但 PostgreSQL 没有对应 running Run：视为孤儿，取消并 `finalize(abort)`。
-- PostgreSQL `running` 但 Runtime 没有 execution：立即标记 `interrupted` 并 finalized。
+- Go 启动时先调用 Provider `List`，再将 PostgreSQL 未 finalized Run 与 Lease/Runtime execution 联合协调；协调完成前不启动 scheduler。
+- 调用 Acquire 前先在 Run 记录 `sandbox_provider`，成功后再记录 `sandbox_ref`；nullable 状态按 §5.4 表解释。`SANDBOX_PROVIDER` 不是状态迁移工具：只要任何保留 Run 记录的 provider 与当前配置不同，启动就保持暂停并报告错误。V0 要求先在旧 Provider 下 purge/reset 数据再切换；跨 Provider SDK Session 迁移以后再设计。
+- PostgreSQL `running` 且 Lease/Runtime 有 active execution：`Recover` 后取消并确认停止，再标记 `interrupted`。
+- Provider 有 Lease 或 Runtime execution，但 PostgreSQL 没有对应 Run：视为孤儿，取消、`finalize(abort)` 并 `Release`。
+- PostgreSQL `running` 但 Sandbox 无法恢复且 Runtime 没有 execution：标记 `interrupted`；只有确认无需释放资源后才能 finalized。
 - Runtime HTTP server 重启时，先终止本地 execution record 对应的 worker 进程组，再报告 healthy。
 - 不自动重试。
 
@@ -421,10 +481,10 @@ queued          -> cancelled
 4. Run 只在候选 Session 上执行。
 5. 候选 transcript durable 后才能发出 `agent.completed`。
 6. Go 在一个 PostgreSQL 事务中提交 Artifact 元数据、Conversation 新 active Session 指针和 Run `succeeded`。
-7. Go 调用 `finalize(commit)`；确认后写入 `finalized_at`。
-8. 失败或取消时调用 `finalize(abort)`，旧 active Session 不变。
+7. Go 调用 `finalize(commit)`；确认后调用 `Release`，只有 release 确认后才写入 `finalized_at`。
+8. 失败或取消时调用 `finalize(abort)`，随后 `Release`；旧 active Session 不变，两步完成前 `finalized_at` 保持 null。
 
-若 Go 在数据库提交后、`finalize(commit)` 前崩溃，启动协调看到候选 ID 已成为 Conversation active 指针后重复 commit。若 commit 已完成但 `finalized_at` 未写入，Go 用 `HEAD /v1/sessions/{id}` 确认 Session 存在，再补写 `finalized_at`。Runtime 状态不能单独推进 Conversation。
+若 Go 在数据库提交后、`finalize(commit)` 前崩溃，启动协调看到候选 ID 已成为 Conversation active 指针后重复 commit，用 `HEAD /v1/sessions/{id}` 确认 Session，再 Release Lease，最后补写 `finalized_at`。若 commit 或 release 已完成但 `finalized_at` 未写入，也重复同一幂等序列。非 succeeded 或 candidate 未 promotion 时选择 abort，再 Release。Runtime 状态不能单独推进 Conversation。
 
 ### 8.4 取消
 
@@ -435,19 +495,25 @@ queued          -> cancelled
 
 ### 8.5 终态收尾矩阵
 
-`finalized_at` 表示 Runtime disposition 已完成，或该 Run 从未创建 Runtime 状态。只有设置后才发产品终态 event。
+`finalized_at` 表示 Runtime disposition 已完成且 Sandbox Lease 已成功释放，或该 Run 从未获取 Lease。只有设置后才发产品终态 event。
 
 | 路径 | Run status | Runtime disposition | `finalized_at` |
 |---|---|---|---|
 | queued 时取消 | `cancelled` | 无 | 与取消同一事务写入 |
-| execute 前准备失败 | `failed` | 无 | 与失败同一事务写入 |
-| 已创建 execution 后 Agent/Runtime 失败 | `failed` | `finalize(abort)` | abort 确认后 |
-| Artifact 校验或发布失败 | `failed` | `finalize(abort)` | abort 确认后 |
-| Agent 阶段取消 | `cancelled` | cancel 后 `finalize(abort)` | abort 确认后 |
-| Control Plane 重启协调 | `interrupted` | 有 Runtime 状态则 abort；没有则无 | abort 确认后，或立即 |
-| 成功执行与发布 | `succeeded` | `finalize(commit)` | commit 确认后 |
+| Acquire Lease 前准备失败 | `failed` | 无 | 与失败同一事务写入 |
+| Sandbox Acquire 明确失败且未创建 Lease | `failed` | 无 | 与失败同一事务写入 |
+| 已 Acquire Lease，但 execute 未创建 Runtime state | `failed` | 仅 `Release` | release 确认后 |
+| 已创建 execution 后 Agent/Runtime 失败 | `failed` | `finalize(abort)` + `Release` | abort 与 release 确认后 |
+| Artifact 校验或发布失败 | `failed` | `finalize(abort)` + `Release` | abort 与 release 确认后 |
+| Agent 阶段取消 | `cancelled` | cancel 后 `finalize(abort)` + `Release` | abort 与 release 确认后 |
+| Control Plane 重启协调 | `interrupted` | 有 Runtime 状态则 abort；有 Lease 则 release | disposition 与 release 确认后，或立即 |
+| 成功执行与发布 | `succeeded` | `finalize(commit)` + `Release` | commit 与 release 确认后 |
 
-若 Runtime 暂时不可用，Run 可以已有终态 status 但尚未 finalized。此时 scheduler 和删除操作暂停，直到协调流程完成幂等 disposition。
+若 Runtime 暂时不可用或 Provider release 失败，Run 可以已有终态 status 但尚未 finalized。此时 scheduler 和删除操作暂停，直到协调流程完成幂等 disposition 与 release。Release 失败不能回滚已经提交的产品状态，也不能把同一个 Run 自动重跑。
+
+不确定结果的 `Acquire` 错误不能当作“没有 Lease”。Run 保持 unfinalized，协调流程通过 Provider `List` 与 `run_id` 幂等键发现或最终确认不存在已获取的 Sandbox。
+
+不确定结果的 `execute` 错误遵循同一原则：协调必须 Recover Lease 并检查 Runtime execution。有匹配 record 时先 cancel/finalize 再 Release；只有权威确认不存在 record 才能只 Release。
 
 ## 9. 核心数据流
 
@@ -458,15 +524,15 @@ queued          -> cancelled
 5. 浏览器订阅 Run SSE。
 6. Scheduler 领取最早 queued Run。
 7. Go 创建 Workspace，复制 Profile Workspace 模板，并准备全部未删除 Project Input File。
-8. Go 调用 Runtime execute。
-9. Runtime 持久化 execution、fork/创建候选 SDK Session、启动 worker 并流式返回 normalized event。
+8. Go 先持久化选定 Provider，再调用 `SandboxProvider.Acquire(run_id)`，成功后持久化 ref，并使用 Lease 提供的路径构造 Runtime 请求。
+9. Go 通过 `Lease.Runtime()` 执行；Runtime 持久化 execution、fork/创建候选 SDK Session、启动 worker 并流式返回 normalized event。
 10. Go 以单调 sequence 持久化关键事件并转发 SSE。
-11. Claude 在 output 目录写入文件和 Manifest。
+11. Claude 在 Sandbox output 目录写入文件和 Manifest。
 12. Runtime 校验并发出 `agent.completed`。
-13. Go 分配 Artifact ID，将文件上传到最终不可变前缀；此时因无 DB 元数据仍不可见。
+13. Go 调用 `Lease.SyncBack`，从本地 Workspace 校验 Manifest，并将文件上传到最终不可变前缀；此时因无 DB 元数据仍不可见。
 14. Go 在一个事务中提交 Artifact、active SDK Session pointer 和 Run succeeded。
-15. Go 调用 `finalize(commit)` 并写 `finalized_at`。
-16. Go 发出 `artifact.published` 和 `run.succeeded`，浏览器通过 Artifact Gateway 打开主制品。
+15. Go 调用 Runtime `finalize(commit)`，再调用 `Lease.Release`。
+16. Go 写 `finalized_at`，发出 `artifact.published` 和 `run.succeeded`；浏览器通过 Artifact Gateway 打开主制品。
 
 浏览器 SSE 断开不会取消 Run。重连使用最后收到的 durable sequence 补发。
 
@@ -477,6 +543,9 @@ queued          -> cancelled
 ```text
 invalid_input
 runtime_unavailable
+sandbox_acquire_failed
+sandbox_sync_failed
+sandbox_release_failed
 agent_failed
 agent_timeout
 manifest_invalid
@@ -491,7 +560,7 @@ interrupted
 - 对象上传失败留下不可达的部分前缀并尽力清理。
 - DB 提交失败留下不可达孤儿前缀，交给幂等清理命令。
 - 候选 SDK Session 只有成功事务提交后才能成为 active。
-- 启动协调必须解决所有 unfinalized execution，之后才能开始下一 Run。
+- 启动协调必须解决所有 unfinalized Runtime execution 与 Sandbox Lease，之后才能开始下一 Run。
 - 失败 Workspace 暂时保留，显式清理。
 - 当前 Run 失败时，UI 继续展示最近一次成功 Artifact。
 
@@ -546,7 +615,7 @@ Runtime 本身在 V0 中允许自由联网，这是已接受的可信本地威�
 
 ### 14.1 模块测试
 
-- Go：Run 状态转换、FIFO claim、SSE 补发、Artifact 发布规则。
+- Go：Run 状态转换、FIFO claim、SSE 补发、Artifact 发布规则，以及共享的 SandboxProvider contract suite。
 - Python：SDK event 转换、Session fork/resume 参数、Workspace 路径和 Manifest 校验。
 - Vue：Conversation 状态、SSE 重连、Artifact 版本和错误展示。
 
@@ -556,9 +625,11 @@ Runtime 本身在 V0 中允许自由联网，这是已接受的可信本地威�
 - 验证 Message/Run 事务。
 - 验证队列、重启协调和全局并发。
 - 验证元数据控制 Artifact 可见性、孤儿清理和发布失败。
-- 验证 Go 与 Fake Runtime 的 NDJSON 流。
+- 验证 Go 经 Fake SandboxProvider 与 Fake Runtime 的 NDJSON 流。
+- 验证 Docker 与 Fake Provider 都满足 Acquire 幂等、Recover 不创建、路径归属、SyncBack 和 Release 幂等。
 - 表驱动覆盖终态 finalization 矩阵。
-- 覆盖 finalize acknowledgement 前后崩溃恢复和 tombstone 幂等删除。
+- 覆盖 Acquire/execute 结果不确定、release failure，以及完整终态 finalization 矩阵。
+- 覆盖 finalize acknowledgement、release acknowledgement、terminal Event 持久化前后崩溃恢复和 tombstone 幂等删除。
 
 ### 14.3 浏览器 E2E
 
@@ -584,7 +655,7 @@ Playwright 使用 Fake Runtime 完成：
 ### 阶段 1：Walking Skeleton
 
 - 仓库骨架和 `docker-compose.yaml`。
-- PostgreSQL、MinIO、Go、Vue 和 Fake Runtime。
+- PostgreSQL、MinIO、Go、Vue、Docker/Fake SandboxProvider 和 Fake Runtime。
 - 版本化 contracts。
 - 最小 Project、Conversation、Message、Run 模型。
 - 固定 HTML Artifact 与 iframe。
@@ -617,9 +688,9 @@ Playwright 使用 Fake Runtime 完成：
 |---|---|
 | 第二个 Profile 依赖冲突 | Profile 选择 Runtime 镜像 |
 | 不可信输入或多用户 | 每 Run 容器、egress policy、认证与租户隔离 |
-| 确实需要并发 | Worker、lease、并发度和配额 |
+| 确实需要并发 | 独立 Go worker、数据库 claim lease、可配置并发度和配额；这里不是 Sandbox Lease |
 | Agent 需要中途询问 | WebSocket 和 HITL 状态 |
-| Runtime 移到远程主机 | Workspace transfer protocol 与 remote Executor |
+| 需要托管、弹性或远端隔离执行 | 实现 E2B SandboxProvider；补充 Workspace 上传/下载与 Session 持久化方案 |
 | Artifact 需要修改产品状态 | 带 scope capability token 的受限 Artifact interface |
 | 日志不足以排障 | OpenTelemetry 和 metrics stack |
 
@@ -632,6 +703,7 @@ Playwright 使用 Fake Runtime 完成：
 | 失败 Run 污染上下文 | Session fork + 成功后提交 |
 | Generated HTML 攻击主 UI | 独立 listener、sandboxed iframe、CSP、无产品凭证 |
 | 共享 Runtime 跨 Run 泄漏 | 可信本地模型、单并发、独立 Workspace |
+| Provider 抽象提前泛化 | 只暴露 Acquire/Recover/List 和 Run 所需 Lease；V0 不加入通用 shell/filesystem API 或 E2B 依赖 |
 | Runtime 自由联网导致数据外传 | 明确排除在 V0 安全范围外，多用户前必须重做 |
 | PostgreSQL 与 MinIO 对个人项目偏重 | 基础设施实践本身是已确认的项目目标 |
 | Session、Workspace 和 tombstone 增长 | 显式幂等清理命令，不提前建设后台服务 |
