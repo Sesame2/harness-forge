@@ -35,28 +35,33 @@ def test_run_request_fixture() -> None:
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("field", "value", "expected_location"),
     [
-        ("run_id", "not-a-uuid"),
-        ("prompt", ""),
+        ("run_id", "not-a-uuid", ("run_id",)),
+        ("prompt", "", ("prompt",)),
         (
             "paths",
             {"inputs": "relative", "workspace": "/workspace", "outputs": "/outputs"},
+            ("paths", "inputs"),
         ),
     ],
 )
-def test_run_request_rejects_invalid_values(field: str, value: object) -> None:
+def test_run_request_rejects_invalid_values(
+    field: str, value: object, expected_location: tuple[str, ...]
+) -> None:
     document = json.loads((FIXTURES / "run-request.json").read_text())
     document[field] = value
-    with pytest.raises(ValidationError):
-        RunRequest.model_validate(document)
+    with pytest.raises(ValidationError) as exc_info:
+        RunRequest.model_validate_json(json.dumps(document))
+    assert expected_location in {error["loc"] for error in exc_info.value.errors()}
 
 
 def test_run_request_rejects_unknown_top_level_field() -> None:
     document = json.loads((FIXTURES / "run-request.json").read_text())
     document["unexpected"] = True
-    with pytest.raises(ValidationError):
-        RunRequest.model_validate(document)
+    with pytest.raises(ValidationError) as exc_info:
+        RunRequest.model_validate_json(json.dumps(document))
+    assert ("unexpected",) in {error["loc"] for error in exc_info.value.errors()}
 
 
 def test_runtime_event_fixture_has_all_typed_payloads() -> None:
@@ -81,6 +86,29 @@ def test_runtime_event_fixture_has_all_typed_payloads() -> None:
     assert isinstance(candidate, ArtifactCandidatePayload)
     assert isinstance(completed, AgentCompletedPayload)
     assert completed.artifacts == candidate.artifacts
+
+
+@pytest.mark.parametrize(
+    "occurred_at",
+    ["2026-07-19", "2026-07-19T00:00:00"],
+)
+def test_runtime_event_rejects_non_rfc3339_datetime(occurred_at: str) -> None:
+    document = json.loads(
+        (FIXTURES / "runtime-events.ndjson").read_text().splitlines()[0]
+    )
+    document["occurred_at"] = occurred_at
+    with pytest.raises(ValidationError) as exc_info:
+        RuntimeEvent.model_validate_json(json.dumps(document))
+    assert ("occurred_at",) in {error["loc"] for error in exc_info.value.errors()}
+
+
+def test_runtime_event_accepts_rfc3339_offset_datetime() -> None:
+    document = json.loads(
+        (FIXTURES / "runtime-events.ndjson").read_text().splitlines()[0]
+    )
+    document["occurred_at"] = "2026-07-19T08:00:00+08:00"
+    event = RuntimeEvent.model_validate_json(json.dumps(document))
+    assert event.occurred_at.isoformat() == "2026-07-19T08:00:00+08:00"
 
 
 def test_unknown_event_fixture_is_parseable_but_not_terminal() -> None:

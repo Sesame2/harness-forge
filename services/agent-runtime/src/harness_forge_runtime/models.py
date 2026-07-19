@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+RFC3339_DATETIME = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d"
+    r"(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$"
+)
 
 
 class ContractModel(BaseModel):
@@ -172,8 +179,8 @@ class RuntimeEvent(ContractModel):
     @field_validator("occurred_at", mode="before")
     @classmethod
     def require_json_datetime_string(cls, value: Any) -> Any:
-        if not isinstance(value, str):
-            raise ValueError("occurred_at must be a JSON date-time string")
+        if not isinstance(value, str) or RFC3339_DATETIME.fullmatch(value) is None:
+            raise ValueError("occurred_at must be an RFC3339 date-time with timezone")
         return value
 
     @model_validator(mode="before")
