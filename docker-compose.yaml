@@ -1,2 +1,117 @@
 name: harness-forge
-services: {}
+
+services:
+  postgres:
+    image: postgres:17.5-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-harness_forge}
+      POSTGRES_USER: ${POSTGRES_USER:-harness_forge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-only}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address :9001
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-harness_forge}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local-dev-only}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    entrypoint: ["/bin/sh", "/create-bucket.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-harness_forge}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local-dev-only}
+      MINIO_BUCKET: ${MINIO_BUCKET:-harness-forge}
+    volumes:
+      - ./infra/minio/create-bucket.sh:/create-bucket.sh:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  agent-runtime:
+    build:
+      context: ./services/agent-runtime
+    ports:
+      - "8090:8090"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      WORKSPACE_ROOT: /workspaces
+      SESSION_ROOT: /sessions
+    volumes:
+      - run-workspaces:/workspaces
+      - runtime-sessions:/sessions
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  control-plane:
+    build:
+      context: ./services/control-plane
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://harness_forge:local-dev-only@postgres:5432/harness_forge?sslmode=disable}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-harness_forge}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-local-dev-only}
+      MINIO_BUCKET: ${MINIO_BUCKET:-harness-forge}
+      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-docker}
+      RUNTIME_URL: ${RUNTIME_URL:-http://agent-runtime:8090}
+      WORKSPACE_ROOT: ${WORKSPACE_ROOT:-/workspaces}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+    volumes:
+      - run-workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build:
+      context: ./apps/web
+    ports:
+      - "5173:5173"
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5173/"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
+  minio-data:
+  run-workspaces:
+  runtime-sessions:
