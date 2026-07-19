@@ -197,11 +197,17 @@ func parseEventPayload(eventType string, data []byte) (any, error) {
 	case *AssistantMessagePayload:
 		return *value, nil
 	case *ToolStartedPayload:
+		if strings.TrimSpace(value.ToolCallID) == "" || strings.TrimSpace(value.Name) == "" {
+			return nil, errors.New("tool_call_id and name must not be empty")
+		}
 		if value.Input == nil {
 			return nil, errors.New("input is required")
 		}
 		return *value, nil
 	case *ToolCompletedPayload:
+		if strings.TrimSpace(value.ToolCallID) == "" || strings.TrimSpace(value.Name) == "" {
+			return nil, errors.New("tool_call_id and name must not be empty")
+		}
 		if value.Outcome != "succeeded" && value.Outcome != "failed" {
 			return nil, errors.New("outcome must be succeeded or failed")
 		}

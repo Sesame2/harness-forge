@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -25,6 +26,15 @@ from harness_forge_runtime.models import (
 FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "contracts"
 
 
+def set_nested(
+    document: dict[str, Any], path: tuple[str | int, ...], value: object
+) -> None:
+    target: Any = document
+    for segment in path[:-1]:
+        target = target[segment]
+    target[path[-1]] = value
+
+
 def test_run_request_fixture() -> None:
     request = RunRequest.model_validate_json(
         (FIXTURES / "run-request.json").read_text()
@@ -32,6 +42,12 @@ def test_run_request_fixture() -> None:
     assert request.version == "1"
     assert request.profile.id == "geo-analysis"
     assert request.limits.max_turns == 8
+
+
+def test_run_request_fixture_from_decoded_json_dict() -> None:
+    document = json.loads((FIXTURES / "run-request.json").read_text())
+    request = RunRequest.model_validate(document)
+    assert str(request.run_id) == "00000000-0000-0000-0000-000000000001"
 
 
 @pytest.mark.parametrize(
@@ -64,6 +80,32 @@ def test_run_request_rejects_unknown_top_level_field() -> None:
     assert ("unexpected",) in {error["loc"] for error in exc_info.value.errors()}
 
 
+@pytest.mark.parametrize("blank", ["", " \t "])
+def test_run_request_rejects_blank_source_sdk_session_id(blank: str) -> None:
+    document = json.loads((FIXTURES / "run-request.json").read_text())
+    document["source_sdk_session_id"] = blank
+    with pytest.raises(ValidationError) as exc_info:
+        RunRequest.model_validate(document)
+    assert ("source_sdk_session_id",) in {
+        error["loc"] for error in exc_info.value.errors()
+    }
+
+
+def test_non_blank_identifiers_are_validated_without_being_trimmed() -> None:
+    request_document = json.loads((FIXTURES / "run-request.json").read_text())
+    request_document["source_sdk_session_id"] = " sdk-session-1 "
+    request = RunRequest.model_validate(request_document)
+    assert request.source_sdk_session_id == " sdk-session-1 "
+
+    event_document = json.loads(
+        (FIXTURES / "runtime-events.ndjson").read_text().splitlines()[3]
+    )
+    event_document["payload"]["tool_call_id"] = " call-1 "
+    event = RuntimeEvent.model_validate(event_document)
+    assert isinstance(event.payload, ToolStartedPayload)
+    assert event.payload.tool_call_id == " call-1 "
+
+
 def test_runtime_event_fixture_has_all_typed_payloads() -> None:
     lines = (FIXTURES / "runtime-events.ndjson").read_text().splitlines()
     events = [RuntimeEvent.model_validate_json(line) for line in lines]
@@ -86,6 +128,17 @@ def test_runtime_event_fixture_has_all_typed_payloads() -> None:
     assert isinstance(candidate, ArtifactCandidatePayload)
     assert isinstance(completed, AgentCompletedPayload)
     assert completed.artifacts == candidate.artifacts
+
+
+def test_runtime_event_fixture_from_decoded_json_dict() -> None:
+    documents = [
+        json.loads(line)
+        for line in (FIXTURES / "runtime-events.ndjson").read_text().splitlines()
+    ]
+    events = [RuntimeEvent.model_validate(document) for document in documents]
+    assert [event.type for event in events] == [
+        document["type"] for document in documents
+    ]
 
 
 @pytest.mark.parametrize(
@@ -171,13 +224,50 @@ def test_runtime_event_rejects_json_type_coercion_and_explicit_null_optionals(
         for line in (FIXTURES / "runtime-events.ndjson").read_text().splitlines()
     ]
     document = next(item for item in documents if item["type"] == event_type)
-    target: object = document
-    for segment in field_path[:-1]:
-        target = target[segment]  # type: ignore[index]
-    target[field_path[-1]] = invalid_value  # type: ignore[index]
+    set_nested(document, field_path, invalid_value)
 
     with pytest.raises(ValidationError):
         RuntimeEvent.model_validate_json(json.dumps(document))
+
+
+@pytest.mark.parametrize("blank", ["", " \t "])
+def test_runtime_event_rejects_blank_type(blank: str) -> None:
+    document = json.loads(
+        (FIXTURES / "runtime-events.ndjson").read_text().splitlines()[0]
+    )
+    document["type"] = blank
+    with pytest.raises(ValidationError) as exc_info:
+        RuntimeEvent.model_validate(document)
+    assert ("type",) in {error["loc"] for error in exc_info.value.errors()}
+
+
+@pytest.mark.parametrize(
+    ("event_type", "field_path"),
+    [
+        ("tool.started", ("payload", "tool_call_id")),
+        ("tool.started", ("payload", "name")),
+        ("tool.completed", ("payload", "tool_call_id")),
+        ("tool.completed", ("payload", "name")),
+        ("artifact.candidate", ("payload", "artifacts", 0, "name")),
+        ("artifact.candidate", ("payload", "artifacts", 0, "title")),
+        ("agent.completed", ("payload", "candidate_sdk_session_id")),
+        ("agent.failed", ("payload", "code")),
+        ("agent.failed", ("payload", "message")),
+    ],
+)
+@pytest.mark.parametrize("blank", ["", " \t "])
+def test_runtime_event_rejects_blank_identifiers(
+    event_type: str, field_path: tuple[str | int, ...], blank: str
+) -> None:
+    documents = [
+        json.loads(line)
+        for line in (FIXTURES / "runtime-events.ndjson").read_text().splitlines()
+    ]
+    document = next(item for item in documents if item["type"] == event_type)
+    set_nested(document, field_path, blank)
+    with pytest.raises(ValidationError) as exc_info:
+        RuntimeEvent.model_validate(document)
+    assert any(error["loc"][0] == "payload" for error in exc_info.value.errors())
 
 
 @pytest.mark.parametrize(
@@ -234,8 +324,14 @@ def test_runtime_event_rejects_json_type_coercion_and_explicit_null_optionals(
 def test_runtime_event_rejects_invalid_known_payloads(
     document: dict[str, object],
 ) -> None:
-    with pytest.raises(ValidationError):
-        RuntimeEvent.model_validate(document)
+    generic_document = dict(document)
+    generic_document["type"] = f"future.{document['type']}"
+    generic_event = RuntimeEvent.model_validate_json(json.dumps(generic_document))
+    assert type(generic_event.payload) is dict
+
+    with pytest.raises(ValidationError) as exc_info:
+        RuntimeEvent.model_validate_json(json.dumps(document))
+    assert any(error["loc"][0] == "payload" for error in exc_info.value.errors())
 
 
 def test_artifact_manifest_fixture() -> None:
@@ -244,6 +340,18 @@ def test_artifact_manifest_fixture() -> None:
     )
     assert manifest.schema_version == 1
     assert [artifact.name for artifact in manifest.artifacts] == ["report", "dataset"]
+
+
+@pytest.mark.parametrize("field", ["name", "title"])
+@pytest.mark.parametrize("blank", ["", " \t "])
+def test_artifact_manifest_rejects_blank_name_and_title(field: str, blank: str) -> None:
+    document = json.loads((FIXTURES / "artifact-manifest.json").read_text())
+    document["artifacts"][0][field] = blank
+    with pytest.raises(ValidationError) as exc_info:
+        ArtifactManifest.model_validate(document)
+    assert ("artifacts", 0, field) in {
+        error["loc"] for error in exc_info.value.errors()
+    }
 
 
 @pytest.mark.parametrize(

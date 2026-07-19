@@ -90,6 +90,8 @@ func TestRunRequestSchemaRejectsInvalidDocuments(t *testing.T) {
 		"unknown top-level field": func(value map[string]any) { value["unexpected"] = true },
 		"invalid run id":          func(value map[string]any) { value["run_id"] = "not-a-uuid" },
 		"empty prompt":            func(value map[string]any) { value["prompt"] = "" },
+		"empty source sdk id":     func(value map[string]any) { value["source_sdk_session_id"] = "" },
+		"blank source sdk id":     func(value map[string]any) { value["source_sdk_session_id"] = " \t " },
 		"relative container path": func(value map[string]any) {
 			value["paths"].(map[string]any)["workspace"] = "workspace"
 		},
@@ -142,13 +144,23 @@ func TestRuntimeEventUnknownTypeIsForwardCompatibleAndNonTerminal(t *testing.T) 
 func TestRuntimeEventSchemaAndParserRejectsInvalidPayloads(t *testing.T) {
 	schema := compileSchema(t, contractPath(t, "runtime/v1/runtime-event.schema.json"))
 	tests := map[string]string{
-		"missing required":         `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"phase.changed","occurred_at":"2026-07-19T00:00:00Z","payload":{}}`,
-		"wrong type":               `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"assistant.delta","occurred_at":"2026-07-19T00:00:00Z","payload":{"text":42}}`,
-		"null required string":     `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"assistant.delta","occurred_at":"2026-07-19T00:00:00Z","payload":{"text":null}}`,
-		"missing required bool":    `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"agent.failed","occurred_at":"2026-07-19T00:00:00Z","payload":{"code":"failed","message":"failed"}}`,
-		"unknown artifact type":    `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"artifact.candidate","occurred_at":"2026-07-19T00:00:00Z","payload":{"artifacts":[{"name":"map","title":"Map","type":"video","entry":"map.mp4","primary":true}]}}`,
-		"missing artifact primary": `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"artifact.candidate","occurred_at":"2026-07-19T00:00:00Z","payload":{"artifacts":[{"name":"map","title":"Map","type":"html","entry":"map.html"}]}}`,
-		"failed without error":     `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"tool.completed","occurred_at":"2026-07-19T00:00:00Z","payload":{"tool_call_id":"call-1","name":"write","outcome":"failed"}}`,
+		"missing required":           `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"phase.changed","occurred_at":"2026-07-19T00:00:00Z","payload":{}}`,
+		"wrong type":                 `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"assistant.delta","occurred_at":"2026-07-19T00:00:00Z","payload":{"text":42}}`,
+		"null required string":       `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"assistant.delta","occurred_at":"2026-07-19T00:00:00Z","payload":{"text":null}}`,
+		"missing required bool":      `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"agent.failed","occurred_at":"2026-07-19T00:00:00Z","payload":{"code":"failed","message":"failed"}}`,
+		"unknown artifact type":      `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"artifact.candidate","occurred_at":"2026-07-19T00:00:00Z","payload":{"artifacts":[{"name":"map","title":"Map","type":"video","entry":"map.mp4","primary":true}]}}`,
+		"missing artifact primary":   `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"artifact.candidate","occurred_at":"2026-07-19T00:00:00Z","payload":{"artifacts":[{"name":"map","title":"Map","type":"html","entry":"map.html"}]}}`,
+		"failed without error":       `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"tool.completed","occurred_at":"2026-07-19T00:00:00Z","payload":{"tool_call_id":"call-1","name":"write","outcome":"failed"}}`,
+		"blank event type":           `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":" \t ","occurred_at":"2026-07-19T00:00:00Z","payload":{}}`,
+		"empty tool started id":      `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"tool.started","occurred_at":"2026-07-19T00:00:00Z","payload":{"tool_call_id":"","name":"write","input":{}}}`,
+		"blank tool started name":    `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"tool.started","occurred_at":"2026-07-19T00:00:00Z","payload":{"tool_call_id":"call-1","name":" \t ","input":{}}}`,
+		"empty tool completed id":    `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"tool.completed","occurred_at":"2026-07-19T00:00:00Z","payload":{"tool_call_id":"","name":"write","outcome":"succeeded"}}`,
+		"blank tool completed name":  `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"tool.completed","occurred_at":"2026-07-19T00:00:00Z","payload":{"tool_call_id":"call-1","name":" \t ","outcome":"succeeded"}}`,
+		"blank artifact name":        `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"artifact.candidate","occurred_at":"2026-07-19T00:00:00Z","payload":{"artifacts":[{"name":" \t ","title":"Map","type":"html","entry":"map.html","primary":true}]}}`,
+		"blank artifact title":       `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"artifact.candidate","occurred_at":"2026-07-19T00:00:00Z","payload":{"artifacts":[{"name":"map","title":" \t ","type":"html","entry":"map.html","primary":true}]}}`,
+		"blank candidate session id": `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"agent.completed","occurred_at":"2026-07-19T00:00:00Z","payload":{"candidate_sdk_session_id":" \t ","artifacts":[]}}`,
+		"blank failure code":         `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"agent.failed","occurred_at":"2026-07-19T00:00:00Z","payload":{"code":" \t ","message":"failed","retryable":false}}`,
+		"blank failure message":      `{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"agent.failed","occurred_at":"2026-07-19T00:00:00Z","payload":{"code":"failed","message":" \t ","retryable":false}}`,
 	}
 
 	for name, document := range tests {
@@ -196,6 +208,8 @@ func TestArtifactManifestRejectsInvalidDocuments(t *testing.T) {
 	schema := compileSchema(t, contractPath(t, "artifacts/v1/artifact-manifest.schema.json"))
 	schemaInvalid := []string{
 		`{"schema_version":1,"artifacts":[{"name":"","title":"Map","type":"html","entry":"map.html","primary":true}]}`,
+		`{"schema_version":1,"artifacts":[{"name":" \t ","title":"Map","type":"html","entry":"map.html","primary":true}]}`,
+		`{"schema_version":1,"artifacts":[{"name":"map","title":" \t ","type":"html","entry":"map.html","primary":true}]}`,
 		`{"schema_version":1,"artifacts":[{"name":"map","title":"Map","type":"video","entry":"map.mp4","primary":true}]}`,
 		`{"schema_version":1,"artifacts":[{"name":"map","title":"Map","type":"html","entry":"/map.html","primary":true}]}`,
 		`{"schema_version":1,"artifacts":[{"name":"map","title":"Map","type":"html","entry":"../map.html","primary":true}]}`,

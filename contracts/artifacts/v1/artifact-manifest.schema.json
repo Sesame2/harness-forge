@@ -24,8 +24,8 @@
       "additionalProperties": false,
       "required": ["name", "title", "type", "entry", "primary"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "title": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" },
+        "title": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" },
         "type": { "enum": ["html", "markdown", "image", "data"] },
         "entry": { "$ref": "#/$defs/relativeEntry" },
         "primary": { "type": "boolean" }

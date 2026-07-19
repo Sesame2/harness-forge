@@ -9,7 +9,7 @@
     "version": { "const": "1" },
     "run_id": { "type": "string", "format": "uuid" },
     "sequence": { "type": "integer", "minimum": 0 },
-    "type": { "type": "string", "minLength": 1 },
+    "type": { "$ref": "#/$defs/nonEmptyString" },
     "occurred_at": { "type": "string", "format": "date-time" },
     "payload": { "type": "object" }
   },
@@ -50,7 +50,8 @@
   "$defs": {
     "nonEmptyString": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": ".*\\S.*"
     },
     "relativeEntry": {
       "type": "string",
@@ -97,8 +98,8 @@
       "additionalProperties": false,
       "required": ["tool_call_id", "name", "input"],
       "properties": {
-        "tool_call_id": { "type": "string" },
-        "name": { "type": "string" },
+        "tool_call_id": { "$ref": "#/$defs/nonEmptyString" },
+        "name": { "$ref": "#/$defs/nonEmptyString" },
         "input": { "type": "object" }
       }
     },
@@ -107,8 +108,8 @@
       "additionalProperties": false,
       "required": ["tool_call_id", "name", "outcome"],
       "properties": {
-        "tool_call_id": { "type": "string" },
-        "name": { "type": "string" },
+        "tool_call_id": { "$ref": "#/$defs/nonEmptyString" },
+        "name": { "$ref": "#/$defs/nonEmptyString" },
         "outcome": { "enum": ["succeeded", "failed"] },
         "output": { "type": "string" },
         "error": { "type": "string" }
