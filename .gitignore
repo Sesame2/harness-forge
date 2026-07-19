@@ -33,3 +33,20 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# JavaScript and frontend build artifacts
+node_modules/
+dist/
+
+# Local runtime data
+.data/
+
+# Playwright output
+playwright-report/
+test-results/
+blob-report/
