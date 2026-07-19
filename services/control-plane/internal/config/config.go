@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 const (
@@ -45,7 +46,7 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		"MINIO_SECRET_KEY": config.MinIOSecretKey,
 		"MINIO_BUCKET":     config.MinIOBucket,
 	} {
-		if value == "" {
+		if strings.TrimSpace(value) == "" {
 			return Config{}, fmt.Errorf("%s is required", name)
 		}
 	}
@@ -53,8 +54,12 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	switch config.SandboxProvider {
 	case DockerSandboxProvider:
 		config.RuntimeURL = getenv("RUNTIME_URL")
-		if config.RuntimeURL == "" {
+		if strings.TrimSpace(config.RuntimeURL) == "" {
 			return Config{}, fmt.Errorf("RUNTIME_URL is required for SANDBOX_PROVIDER=docker")
+		}
+		parsedRuntimeURL, err := url.Parse(config.RuntimeURL)
+		if err != nil || (parsedRuntimeURL.Scheme != "http" && parsedRuntimeURL.Scheme != "https") || parsedRuntimeURL.Host == "" {
+			return Config{}, fmt.Errorf("RUNTIME_URL must be an absolute HTTP(S) URL")
 		}
 	case FakeSandboxProvider:
 		// The fake provider runs in-process and does not use a runtime URL.

@@ -98,6 +98,83 @@ func TestConfigFromEnvRequiresSharedInfrastructure(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvRejectsBlankSharedInfrastructure(t *testing.T) {
+	for _, key := range []string{
+		"DATABASE_URL",
+		"MINIO_ENDPOINT",
+		"MINIO_ACCESS_KEY",
+		"MINIO_SECRET_KEY",
+		"MINIO_BUCKET",
+	} {
+		t.Run(key, func(t *testing.T) {
+			env := validEnvironment()
+			env[key] = " \t\n"
+
+			_, err := ConfigFromEnv(func(name string) string { return env[name] })
+			assertNamedError(t, err, key)
+		})
+	}
+}
+
+func TestConfigFromEnvRejectsBlankRuntimeURLForDocker(t *testing.T) {
+	env := validEnvironment()
+	env["RUNTIME_URL"] = " \t\n"
+
+	_, err := ConfigFromEnv(func(key string) string { return env[key] })
+	assertNamedError(t, err, "RUNTIME_URL")
+}
+
+func TestConfigFromEnvRejectsInvalidRuntimeURLForDocker(t *testing.T) {
+	for name, runtimeURL := range map[string]string{
+		"relative":     "/runtime",
+		"no scheme":    "agent-runtime/runtime",
+		"non-http":     "ftp://agent-runtime:8090",
+		"missing host": "http:///runtime",
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := validEnvironment()
+			env["RUNTIME_URL"] = runtimeURL
+
+			_, err := ConfigFromEnv(func(key string) string { return env[key] })
+			assertNamedError(t, err, "RUNTIME_URL")
+		})
+	}
+}
+
+func TestConfigFromEnvPreservesRequiredValues(t *testing.T) {
+	env := validEnvironment()
+	env["DATABASE_URL"] = " postgres://user:pass@postgres/db "
+	env["MINIO_ENDPOINT"] = " minio:9000 "
+	env["MINIO_ACCESS_KEY"] = " access "
+	env["MINIO_SECRET_KEY"] = " secret "
+	env["MINIO_BUCKET"] = " artifacts "
+	env["RUNTIME_URL"] = "https://agent-runtime.example.test/run?mode=docker"
+
+	got, err := ConfigFromEnv(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("ConfigFromEnv() error = %v", err)
+	}
+
+	if got.DatabaseURL != env["DATABASE_URL"] {
+		t.Errorf("DatabaseURL = %q, want unchanged %q", got.DatabaseURL, env["DATABASE_URL"])
+	}
+	if got.MinIOEndpoint != env["MINIO_ENDPOINT"] {
+		t.Errorf("MinIOEndpoint = %q, want unchanged %q", got.MinIOEndpoint, env["MINIO_ENDPOINT"])
+	}
+	if got.MinIOAccessKey != env["MINIO_ACCESS_KEY"] {
+		t.Errorf("MinIOAccessKey = %q, want unchanged %q", got.MinIOAccessKey, env["MINIO_ACCESS_KEY"])
+	}
+	if got.MinIOSecretKey != env["MINIO_SECRET_KEY"] {
+		t.Errorf("MinIOSecretKey = %q, want unchanged %q", got.MinIOSecretKey, env["MINIO_SECRET_KEY"])
+	}
+	if got.MinIOBucket != env["MINIO_BUCKET"] {
+		t.Errorf("MinIOBucket = %q, want unchanged %q", got.MinIOBucket, env["MINIO_BUCKET"])
+	}
+	if got.RuntimeURL != env["RUNTIME_URL"] {
+		t.Errorf("RuntimeURL = %q, want unchanged %q", got.RuntimeURL, env["RUNTIME_URL"])
+	}
+}
+
 func TestConfigFromEnvRejectsInvalidWebOrigin(t *testing.T) {
 	env := validEnvironment()
 	env["WEB_ORIGIN"] = "://not-a-url"
