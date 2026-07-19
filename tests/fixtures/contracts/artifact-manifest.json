@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "artifacts": [
+    {
+      "name": "report",
+      "title": "Geographic report",
+      "type": "html",
+      "entry": "report.html",
+      "primary": true
+    },
+    {
+      "name": "dataset",
+      "title": "Processed data",
+      "type": "data",
+      "entry": "data/results.json",
+      "primary": false
+    }
+  ]
+}

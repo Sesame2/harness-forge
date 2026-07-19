@@ -1,0 +1,544 @@
+openapi: 3.1.0
+info:
+  title: Harness Forge Control Plane API
+  version: 1.0.0
+paths:
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+    post:
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProject'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/projects/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      operationId: getProject
+      responses:
+        '200':
+          description: Project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: renameProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameProject'
+      responses:
+        '200':
+          description: Project renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteProject
+      responses:
+        '204':
+          description: Project deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/projects/{project_id}/inputs:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      operationId: listProjectInputs
+      responses:
+        '200':
+          description: Input files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InputFile'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: uploadProjectInput
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Input file created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InputFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+  /api/v1/projects/{project_id}/conversations:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      operationId: listProjectConversations
+      responses:
+        '200':
+          description: Conversations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Conversation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversation'
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/conversations/{conversation_id}:
+    parameters:
+      - $ref: '#/components/parameters/ConversationId'
+    get:
+      operationId: getConversation
+      responses:
+        '200':
+          description: Conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: renameConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameConversation'
+      responses:
+        '200':
+          description: Conversation renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteConversation
+      responses:
+        '204':
+          description: Conversation deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/conversations/{conversation_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/ConversationId'
+    get:
+      operationId: listConversationMessages
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: submitMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitMessage'
+      responses:
+        '201':
+          description: Message accepted and run created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitMessageResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/conversations/{conversation_id}/runs:
+    parameters:
+      - $ref: '#/components/parameters/ConversationId'
+    get:
+      operationId: listConversationRuns
+      description: Returns runs ordered by created_at ascending.
+      responses:
+        '200':
+          description: Runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Run'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: getRun
+      responses:
+        '200':
+          description: Run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/runs/{run_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: listRunEvents
+      parameters:
+        - $ref: '#/components/parameters/AfterSequence'
+      responses:
+        '200':
+          description: Durable run events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/runs/{run_id}/events/stream:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: streamRunEvents
+      description: If after_sequence and Last-Event-ID are both supplied, Last-Event-ID has priority. Each returned SSE frame id equals its durable sequence.
+      parameters:
+        - $ref: '#/components/parameters/AfterSequence'
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: integer
+            format: uint64
+            minimum: 0
+      responses:
+        '200':
+          description: Server-sent durable run event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/runs/{run_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    post:
+      operationId: cancelRun
+      responses:
+        '202':
+          description: Cancellation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/runs/{run_id}/artifacts:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: listRunArtifacts
+      responses:
+        '200':
+          description: Published artifacts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Artifact'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ConversationId:
+      name: conversation_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AfterSequence:
+      name: after_sequence
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: uint64
+        minimum: 0
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Resource state conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PayloadTooLarge:
+      description: Input exceeds the configured size limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, name, profile_id, profile_version, accepted_input_media_types, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        profile_id: { type: string }
+        profile_version: { type: string }
+        accepted_input_media_types:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    InputFile:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, display_name, media_type, size_bytes, sha256_digest, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        display_name: { type: string }
+        media_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        sha256_digest: { type: string }
+        created_at: { type: string, format: date-time }
+    Conversation:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, title, active_sdk_session_id, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        title: { type: string }
+        active_sdk_session_id: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, conversation_id, role, content, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+    Run:
+      type: object
+      additionalProperties: false
+      required: [id, conversation_id, trigger_message_id, status, phase, error, source_sdk_session_id, candidate_sdk_session_id, finalized_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        trigger_message_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled, interrupted]
+        phase:
+          type: [string, 'null']
+          enum: [preparing, agent, publishing, null]
+        error:
+          anyOf:
+            - $ref: '#/components/schemas/Error'
+            - type: 'null'
+        source_sdk_session_id: { type: [string, 'null'] }
+        candidate_sdk_session_id: { type: [string, 'null'] }
+        finalized_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RunEvent:
+      type: object
+      additionalProperties: false
+      required: [run_id, sequence, type, payload, occurred_at]
+      properties:
+        run_id: { type: string, format: uuid }
+        sequence: { type: integer, format: uint64, minimum: 0 }
+        type: { type: string }
+        payload: { type: object }
+        occurred_at: { type: string, format: date-time }
+    Artifact:
+      type: object
+      additionalProperties: false
+      required: [id, run_id, title, type, entry_path, is_primary, gateway_url, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        title: { type: string }
+        type: { type: string, enum: [html, markdown, image, data] }
+        entry_path: { type: string }
+        is_primary: { type: boolean }
+        gateway_url: { type: string, format: uri }
+        created_at: { type: string, format: date-time }
+    SubmitMessageResult:
+      type: object
+      additionalProperties: false
+      required: [message, run]
+      properties:
+        message:
+          $ref: '#/components/schemas/Message'
+        run:
+          $ref: '#/components/schemas/Run'
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, details, request_id]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: [object, 'null'] }
+        request_id: { type: string }
+    CreateProject:
+      type: object
+      additionalProperties: false
+      required: [name, profile_id]
+      properties:
+        name: { type: string, minLength: 1, pattern: '.*\S.*' }
+        profile_id: { type: string, minLength: 1, pattern: '.*\S.*' }
+    RenameProject:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, pattern: '.*\S.*' }
+    CreateConversation:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: [string, 'null'] }
+    RenameConversation:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, pattern: '.*\S.*' }
+    SubmitMessage:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1, pattern: '.*\S.*' }

@@ -1,0 +1,23 @@
+{
+  "version": "1",
+  "run_id": "00000000-0000-0000-0000-000000000001",
+  "project_id": "00000000-0000-0000-0000-000000000002",
+  "conversation_id": "00000000-0000-0000-0000-000000000003",
+  "prompt": "Create an interactive geographic analysis.",
+  "source_sdk_session_id": null,
+  "profile": {
+    "id": "geo-analysis",
+    "version": "1",
+    "digest": "sha256:0123456789abcdef",
+    "config": {}
+  },
+  "paths": {
+    "inputs": "/runs/00000000-0000-0000-0000-000000000001/inputs",
+    "workspace": "/runs/00000000-0000-0000-0000-000000000001/workspace",
+    "outputs": "/runs/00000000-0000-0000-0000-000000000001/outputs"
+  },
+  "limits": {
+    "max_turns": 8,
+    "max_budget_usd": 2.0
+  }
+}

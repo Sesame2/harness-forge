@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness-forge.local/contracts/runtime/v1/run-request.schema.json",
+  "title": "Harness Forge Run Request V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "run_id",
+    "project_id",
+    "conversation_id",
+    "prompt",
+    "source_sdk_session_id",
+    "profile",
+    "paths",
+    "limits"
+  ],
+  "properties": {
+    "version": { "const": "1" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "conversation_id": { "type": "string", "format": "uuid" },
+    "prompt": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" },
+    "source_sdk_session_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "digest", "config"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "minLength": 1 },
+        "config": { "type": "object" }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "workspace", "outputs"],
+      "properties": {
+        "inputs": { "$ref": "#/$defs/absoluteContainerPath" },
+        "workspace": { "$ref": "#/$defs/absoluteContainerPath" },
+        "outputs": { "$ref": "#/$defs/absoluteContainerPath" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_turns", "max_budget_usd"],
+      "properties": {
+        "max_turns": { "type": "integer", "minimum": 1 },
+        "max_budget_usd": { "type": "number", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "absoluteContainerPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^/"
+    }
+  }
+}

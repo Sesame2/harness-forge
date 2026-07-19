@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness-forge.local/contracts/artifacts/v1/artifact-manifest.schema.json",
+  "title": "Harness Forge Artifact Manifest V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ArtifactManifestItem" }
+    }
+  },
+  "$defs": {
+    "relativeEntry": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    },
+    "ArtifactManifestItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "title", "type", "entry", "primary"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["html", "markdown", "image", "data"] },
+        "entry": { "$ref": "#/$defs/relativeEntry" },
+        "primary": { "type": "boolean" }
+      }
+    }
+  }
+}

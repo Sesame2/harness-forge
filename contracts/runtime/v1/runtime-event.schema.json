@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness-forge.local/contracts/runtime/v1/runtime-event.schema.json",
+  "title": "Harness Forge Runtime Event V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "run_id", "sequence", "type", "occurred_at", "payload"],
+  "properties": {
+    "version": { "const": "1" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "type": { "type": "string", "minLength": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "phase.changed" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/PhaseChangedPayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "assistant.delta" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/AssistantDeltaPayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "assistant.message" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/AssistantMessagePayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "tool.started" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ToolStartedPayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "tool.completed" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ToolCompletedPayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "artifact.candidate" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/ArtifactCandidatePayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "agent.completed" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/AgentCompletedPayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "agent.failed" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/AgentFailedPayload" } } }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relativeEntry": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    },
+    "ArtifactCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "title", "type", "entry", "primary"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "type": { "enum": ["html", "markdown", "image", "data"] },
+        "entry": { "$ref": "#/$defs/relativeEntry" },
+        "primary": { "type": "boolean" }
+      }
+    },
+    "ArtifactList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ArtifactCandidate" }
+    },
+    "PhaseChangedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase"],
+      "properties": { "phase": { "enum": ["preparing", "agent"] } }
+    },
+    "AssistantDeltaPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": { "text": { "type": "string" } }
+    },
+    "AssistantMessagePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": { "text": { "type": "string" } }
+    },
+    "ToolStartedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_call_id", "name", "input"],
+      "properties": {
+        "tool_call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "input": { "type": "object" }
+      }
+    },
+    "ToolCompletedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_call_id", "name", "outcome"],
+      "properties": {
+        "tool_call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "outcome": { "enum": ["succeeded", "failed"] },
+        "output": { "type": "string" },
+        "error": { "type": "string" }
+      },
+      "if": { "properties": { "outcome": { "const": "failed" } }, "required": ["outcome"] },
+      "then": { "required": ["error"] }
+    },
+    "ArtifactCandidatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts"],
+      "properties": { "artifacts": { "$ref": "#/$defs/ArtifactList" } }
+    },
+    "AgentCompletedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_sdk_session_id", "artifacts"],
+      "properties": {
+        "candidate_sdk_session_id": { "$ref": "#/$defs/nonEmptyString" },
+        "artifacts": { "$ref": "#/$defs/ArtifactList" }
+      }
+    },
+    "AgentFailedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "$ref": "#/$defs/nonEmptyString" },
+        "message": { "$ref": "#/$defs/nonEmptyString" },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  }
+}
