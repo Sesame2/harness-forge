@@ -22,3 +22,7 @@ test-python:
 
 test-web:
 	cd apps/web && pnpm test -- --run
+
+test-integration:
+	docker compose -f docker-compose.yaml up -d --wait postgres minio
+	TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harness_forge?sslmode=disable' env -u GOROOT go -C services/control-plane test -tags=integration ./internal/postgres -v
