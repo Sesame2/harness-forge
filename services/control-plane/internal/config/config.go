@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,6 +20,7 @@ type Config struct {
 	MinIOAccessKey  string
 	MinIOSecretKey  string
 	MinIOBucket     string
+	ProfileRoot     string
 	SandboxProvider string
 	RuntimeURL      string
 	WorkspaceRoot   string
@@ -34,6 +36,7 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		MinIOAccessKey:  getenv("MINIO_ACCESS_KEY"),
 		MinIOSecretKey:  getenv("MINIO_SECRET_KEY"),
 		MinIOBucket:     getenv("MINIO_BUCKET"),
+		ProfileRoot:     getenv("PROFILE_ROOT"),
 		SandboxProvider: valueOrDefault(getenv("SANDBOX_PROVIDER"), DockerSandboxProvider),
 		WorkspaceRoot:   valueOrDefault(getenv("WORKSPACE_ROOT"), "/workspaces"),
 		WebOrigin:       getenv("WEB_ORIGIN"),
@@ -45,10 +48,14 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		"MINIO_ACCESS_KEY": config.MinIOAccessKey,
 		"MINIO_SECRET_KEY": config.MinIOSecretKey,
 		"MINIO_BUCKET":     config.MinIOBucket,
+		"PROFILE_ROOT":     config.ProfileRoot,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return Config{}, fmt.Errorf("%s is required", name)
 		}
+	}
+	if !filepath.IsAbs(config.ProfileRoot) {
+		return Config{}, fmt.Errorf("PROFILE_ROOT must be an absolute path")
 	}
 
 	switch config.SandboxProvider {

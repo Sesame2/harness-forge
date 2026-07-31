@@ -69,16 +69,18 @@ services:
 
   control-plane:
     build:
-      context: ./services/control-plane
+      context: .
+      dockerfile: services/control-plane/Dockerfile
     ports:
       - "8080:8080"
       - "8081:8081"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgres://harness_forge:local-dev-only@postgres:5432/harness_forge?sslmode=disable}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-harness_forge}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-local-dev-only}
       MINIO_BUCKET: ${MINIO_BUCKET:-harness-forge}
+      PROFILE_ROOT: /app/profiles
       SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-docker}
       RUNTIME_URL: ${RUNTIME_URL:-http://agent-runtime:8090}
       WORKSPACE_ROOT: ${WORKSPACE_ROOT:-/workspaces}

@@ -1,0 +1,18 @@
+id: geo-analysis
+version: "1"
+display_name: Geo Analysis
+system_prompt: system-prompt.md
+workspace_template: workspace-template
+tools:
+  allowed: [Read, Write, Bash]
+  permission_mode: acceptEdits
+agent:
+  max_turns: 20
+  max_budget_usd: 5
+inputs:
+  accepted_media_types: [text/csv, application/geo+json]
+artifacts:
+  manifest_schema_version: 1
+  allowed_types: [html, markdown, image, data]
+  max_file_bytes: 10485760
+  max_total_bytes: 52428800

@@ -1,13 +1,16 @@
 FROM golang:1.25.0-alpine AS builder
 
-WORKDIR /src
-COPY go.mod go.sum ./
+WORKDIR /src/services/control-plane
+COPY services/control-plane/go.mod services/control-plane/go.sum ./
 RUN go mod download
-COPY . .
+COPY services/control-plane/ ./
 RUN CGO_ENABLED=0 go build ./cmd/harness-forge
 
 FROM alpine:3.22
 
 RUN apk add --no-cache curl
-COPY --from=builder /src/harness-forge /usr/local/bin/harness-forge
+WORKDIR /app
+COPY --from=builder /src/services/control-plane/harness-forge /usr/local/bin/harness-forge
+COPY contracts/ /app/contracts/
+COPY profiles/ /app/profiles/
 CMD ["/usr/local/bin/harness-forge"]

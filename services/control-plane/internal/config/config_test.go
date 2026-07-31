@@ -14,6 +14,7 @@ func TestConfigFromEnvMapsCompleteConfiguration(t *testing.T) {
 		"MINIO_ACCESS_KEY": "access",
 		"MINIO_SECRET_KEY": "secret",
 		"MINIO_BUCKET":     "artifacts",
+		"PROFILE_ROOT":     "/tmp/profiles",
 		"SANDBOX_PROVIDER": "fake",
 		"RUNTIME_URL":      "http://agent-runtime:8090",
 		"WORKSPACE_ROOT":   "/tmp/workspaces",
@@ -33,6 +34,7 @@ func TestConfigFromEnvMapsCompleteConfiguration(t *testing.T) {
 		MinIOAccessKey:  "access",
 		MinIOSecretKey:  "secret",
 		MinIOBucket:     "artifacts",
+		ProfileRoot:     "/tmp/profiles",
 		SandboxProvider: "fake",
 		RuntimeURL:      "",
 		WorkspaceRoot:   "/tmp/workspaces",
@@ -87,6 +89,7 @@ func TestConfigFromEnvRequiresSharedInfrastructure(t *testing.T) {
 		"MINIO_ACCESS_KEY",
 		"MINIO_SECRET_KEY",
 		"MINIO_BUCKET",
+		"PROFILE_ROOT",
 	} {
 		t.Run(key, func(t *testing.T) {
 			env := validEnvironment()
@@ -105,6 +108,7 @@ func TestConfigFromEnvRejectsBlankSharedInfrastructure(t *testing.T) {
 		"MINIO_ACCESS_KEY",
 		"MINIO_SECRET_KEY",
 		"MINIO_BUCKET",
+		"PROFILE_ROOT",
 	} {
 		t.Run(key, func(t *testing.T) {
 			env := validEnvironment()
@@ -183,6 +187,14 @@ func TestConfigFromEnvRejectsInvalidWebOrigin(t *testing.T) {
 	assertNamedError(t, err, "WEB_ORIGIN")
 }
 
+func TestConfigFromEnvRejectsRelativeProfileRoot(t *testing.T) {
+	env := validEnvironment()
+	env["PROFILE_ROOT"] = "profiles"
+
+	_, err := ConfigFromEnv(func(key string) string { return env[key] })
+	assertNamedError(t, err, "PROFILE_ROOT")
+}
+
 func TestConfigFromEnvRejectsUnsupportedSandboxProvider(t *testing.T) {
 	env := validEnvironment()
 	env["SANDBOX_PROVIDER"] = "e2b"
@@ -198,6 +210,7 @@ func validEnvironment() map[string]string {
 		"MINIO_ACCESS_KEY": "access",
 		"MINIO_SECRET_KEY": "secret",
 		"MINIO_BUCKET":     "artifacts",
+		"PROFILE_ROOT":     "/app/profiles",
 		"RUNTIME_URL":      "http://agent-runtime:8090",
 		"WEB_ORIGIN":       "http://localhost:5173",
 	}
