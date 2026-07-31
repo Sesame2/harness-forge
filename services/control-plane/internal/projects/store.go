@@ -10,7 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Store struct{ pool *pgxpool.Pool }
+type Store struct {
+	pool                  *pgxpool.Pool
+	afterInputProjectLock func()
+}
 
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
@@ -80,6 +83,9 @@ func (s *Store) SaveInput(ctx context.Context, input InputFile) (_ InputFile, er
 	}
 	if deleted {
 		return InputFile{}, ErrConflict
+	}
+	if s.afterInputProjectLock != nil {
+		s.afterInputProjectLock()
 	}
 	err = tx.QueryRow(ctx, `INSERT INTO input_files(id,project_id,display_name,media_type,size_bytes,sha256_digest,object_key) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING created_at`, input.ID, input.ProjectID, input.DisplayName, input.MediaType, input.SizeBytes, input.SHA256Digest, input.ObjectKey).Scan(&input.CreatedAt)
 	if err != nil {

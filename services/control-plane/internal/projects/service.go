@@ -113,6 +113,7 @@ func (s *Service) UploadInput(ctx context.Context, projectID uuid.UUID, displayN
 	counter := &countWriter{}
 	stream := io.TeeReader(io.LimitReader(reader, snapshot.Artifacts.MaxFileBytes+1), io.MultiWriter(hash, counter))
 	if err := s.objects.Put(ctx, input.ObjectKey, stream, objectstore.PutOptions{ContentType: mediaType}); err != nil {
+		_ = s.objects.Delete(ctx, input.ObjectKey)
 		return InputFile{}, fmt.Errorf("store input object: %w", err)
 	}
 	if counter.count > snapshot.Artifacts.MaxFileBytes {

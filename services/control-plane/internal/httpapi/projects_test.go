@@ -109,8 +109,10 @@ func TestProjectHTTPErrorsMatchComponents(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%s", response.Code, tt.want, response.Body.String())
 			}
 			var component struct {
-				Code, Message, RequestID string
-				Details                  any `json:"details"`
+				Code      string `json:"code"`
+				Message   string `json:"message"`
+				RequestID string `json:"request_id"`
+				Details   any    `json:"details"`
 			}
 			if err := json.Unmarshal(response.Body.Bytes(), &component); err != nil {
 				t.Fatal(err)
@@ -135,6 +137,46 @@ func TestProjectHTTPRejectsInvalidUUIDAndJSON(t *testing.T) {
 	}
 }
 
+func TestInputFileHTTPRejectsNonUniqueFilePartWithoutWrites(t *testing.T) {
+	projectID := uuid.New()
+	for _, tt := range []struct {
+		name string
+		body func(*testing.T) (*bytes.Buffer, string)
+	}{
+		{name: "unexpected field", body: multipartWithUnexpectedField},
+		{name: "duplicate file", body: multipartWithDuplicateFile},
+		{name: "missing file", body: emptyMultipartBody},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &fakeProjectService{}
+			body, contentType := tt.body(t)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID.String()+"/inputs", body)
+			request.Header.Set("Content-Type", contentType)
+			response := httptest.NewRecorder()
+			NewRouter(service).ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())
+			}
+			if service.uploadWrites != 0 {
+				t.Fatalf("successful upload writes = %d, want 0", service.uploadWrites)
+			}
+			var component struct {
+				Code      string `json:"code"`
+				Message   string `json:"message"`
+				RequestID string `json:"request_id"`
+				Details   any    `json:"details"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &component); err != nil {
+				t.Fatalf("decode error component: %v", err)
+			}
+			if component.Code != "bad_request" || component.Message == "" || component.RequestID == "" || component.Details != nil {
+				t.Fatalf("error component = %#v", component)
+			}
+		})
+	}
+}
+
 func multipartBody(t *testing.T, name string, content []byte) (*bytes.Buffer, string) {
 	t.Helper()
 	body := new(bytes.Buffer)
@@ -152,6 +194,53 @@ func multipartBody(t *testing.T, name string, content []byte) (*bytes.Buffer, st
 	return body, writer.FormDataContentType()
 }
 
+func multipartWithUnexpectedField(t *testing.T) (*bytes.Buffer, string) {
+	t.Helper()
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("unexpected", "value"); err != nil {
+		t.Fatal(err)
+	}
+	writeMultipartFile(t, writer, "one.csv", "a,b")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body, writer.FormDataContentType()
+}
+
+func multipartWithDuplicateFile(t *testing.T) (*bytes.Buffer, string) {
+	t.Helper()
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	writeMultipartFile(t, writer, "one.csv", "a,b")
+	writeMultipartFile(t, writer, "two.csv", "c,d")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body, writer.FormDataContentType()
+}
+
+func emptyMultipartBody(t *testing.T) (*bytes.Buffer, string) {
+	t.Helper()
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body, writer.FormDataContentType()
+}
+
+func writeMultipartFile(t *testing.T, writer *multipart.Writer, name, content string) {
+	t.Helper()
+	part, err := writer.CreateFormFile("file", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(part, content); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type fakeProjectService struct {
 	project                 projects.Project
 	projects                []projects.Project
@@ -160,6 +249,7 @@ type fakeProjectService struct {
 	err                     error
 	uploadName, uploadMedia string
 	uploadData              []byte
+	uploadWrites            int
 }
 
 func (s *fakeProjectService) CreateProject(context.Context, string, string) (projects.Project, error) {
@@ -178,8 +268,12 @@ func (s *fakeProjectService) UploadInput(_ context.Context, _ uuid.UUID, name, m
 	if s.err != nil {
 		return projects.InputFile{}, s.err
 	}
-	s.uploadName, s.uploadMedia = name, media
-	s.uploadData, _ = io.ReadAll(reader)
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return projects.InputFile{}, err
+	}
+	s.uploadName, s.uploadMedia, s.uploadData = name, media, data
+	s.uploadWrites++
 	return s.input, nil
 }
 func (s *fakeProjectService) ListInputs(context.Context, uuid.UUID) ([]projects.InputFile, error) {

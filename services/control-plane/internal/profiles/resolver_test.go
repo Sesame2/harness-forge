@@ -73,6 +73,7 @@ func TestProfileResolverRejectsInvalidProfiles(t *testing.T) {
 		{name: "missing template", directory: "geo-analysis", yaml: validProfileYAML("geo-analysis", "1"), prompt: ptr("prompt")},
 		{name: "zero max file", directory: "geo-analysis", yaml: strings.Replace(validProfileYAML("geo-analysis", "1"), "max_file_bytes: 10485760", "max_file_bytes: 0", 1), prompt: ptr("prompt"), template: map[string]string{"README.md": "template"}},
 		{name: "zero max total", directory: "geo-analysis", yaml: strings.Replace(validProfileYAML("geo-analysis", "1"), "max_total_bytes: 52428800", "max_total_bytes: 0", 1), prompt: ptr("prompt"), template: map[string]string{"README.md": "template"}},
+		{name: "negative budget", directory: "geo-analysis", yaml: strings.Replace(validProfileYAML("geo-analysis", "1"), "max_budget_usd: 5", "max_budget_usd: -1", 1), prompt: ptr("prompt"), template: map[string]string{"README.md": "template"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,6 +101,31 @@ func TestProfileResolverRejectsInvalidProfiles(t *testing.T) {
 			}
 			if _, err := NewResolver(root); err == nil {
 				t.Fatal("NewResolver() error = nil")
+			}
+		})
+	}
+}
+
+func TestProfileResolverAllowsOmittedOrZeroBudget(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		yaml string
+	}{
+		{name: "omitted", yaml: strings.Replace(validProfileYAML("geo-analysis", "1"), "  max_budget_usd: 5\n", "", 1)},
+		{name: "zero", yaml: strings.Replace(validProfileYAML("geo-analysis", "1"), "max_budget_usd: 5", "max_budget_usd: 0", 1)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := writeProfileFixture(t, "geo-analysis", tt.yaml, "prompt", map[string]string{"README.md": "template"})
+			resolver, err := NewResolver(root)
+			if err != nil {
+				t.Fatalf("NewResolver() error = %v", err)
+			}
+			snapshot, err := resolver.Resolve("geo-analysis")
+			if err != nil {
+				t.Fatalf("Resolve() error = %v", err)
+			}
+			if snapshot.Agent.MaxBudgetUSD != 0 {
+				t.Fatalf("MaxBudgetUSD = %v, want 0", snapshot.Agent.MaxBudgetUSD)
 			}
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -121,33 +122,63 @@ func (h projectHandlers) uploadInput(response http.ResponseWriter, request *http
 		writeError(response, projects.ErrInvalid)
 		return
 	}
-	for {
-		part, err := reader.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			writeError(response, projects.ErrInvalid)
-			return
-		}
-		if part.FormName() != "file" || part.FileName() == "" {
+	part, err := reader.NextPart()
+	if err != nil || part.FormName() != "file" || part.FileName() == "" {
+		if part != nil {
 			_ = part.Close()
-			continue
 		}
-		mediaType := part.Header.Get("Content-Type")
-		if mediaType == "" {
-			mediaType = "application/octet-stream"
-		}
-		result, uploadErr := h.service.UploadInput(request.Context(), id, part.FileName(), mediaType, part)
-		_ = part.Close()
-		if uploadErr != nil {
-			writeError(response, uploadErr)
-			return
-		}
-		writeJSON(response, http.StatusCreated, result)
+		writeError(response, fmt.Errorf("%w: multipart body must contain exactly one file field", projects.ErrInvalid))
 		return
 	}
-	writeError(response, fmt.Errorf("%w: multipart field file is required", projects.ErrInvalid))
+	mediaType := part.Header.Get("Content-Type")
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	file := &singleMultipartFile{part: part, multipart: reader}
+	result, uploadErr := h.service.UploadInput(request.Context(), id, part.FileName(), mediaType, file)
+	_ = part.Close()
+	if uploadErr != nil {
+		writeError(response, uploadErr)
+		return
+	}
+	writeJSON(response, http.StatusCreated, result)
+}
+
+type singleMultipartFile struct {
+	part        *multipart.Part
+	multipart   *multipart.Reader
+	partAtEOF   bool
+	terminalErr error
+}
+
+func (r *singleMultipartFile) Read(buffer []byte) (int, error) {
+	if r.terminalErr != nil {
+		return 0, r.terminalErr
+	}
+	if !r.partAtEOF {
+		count, err := r.part.Read(buffer)
+		if err == nil {
+			return count, nil
+		}
+		if !errors.Is(err, io.EOF) {
+			r.terminalErr = fmt.Errorf("%w: read multipart file: %v", projects.ErrInvalid, err)
+			return count, r.terminalErr
+		}
+		r.partAtEOF = true
+		if count > 0 {
+			return count, nil
+		}
+	}
+	next, err := r.multipart.NextPart()
+	if errors.Is(err, io.EOF) {
+		r.terminalErr = io.EOF
+		return 0, io.EOF
+	}
+	if next != nil {
+		_ = next.Close()
+	}
+	r.terminalErr = fmt.Errorf("%w: multipart body must contain exactly one file field", projects.ErrInvalid)
+	return 0, r.terminalErr
 }
 
 func projectID(response http.ResponseWriter, request *http.Request) (uuid.UUID, bool) {

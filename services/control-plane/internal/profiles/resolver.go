@@ -98,7 +98,7 @@ func loadSnapshot(root, directory string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("profile id %q must match directory %q", config.ID, directory)
 	}
 	if strings.TrimSpace(config.Version) == "" || strings.TrimSpace(config.DisplayName) == "" || config.SystemPrompt == "" || config.WorkspaceTemplate == "" ||
-		len(config.Tools.Allowed) == 0 || config.Tools.PermissionMode == "" || config.Agent.MaxTurns <= 0 || config.Agent.MaxBudgetUSD <= 0 ||
+		len(config.Tools.Allowed) == 0 || config.Tools.PermissionMode == "" || config.Agent.MaxTurns <= 0 || config.Agent.MaxBudgetUSD < 0 ||
 		len(config.Inputs.AcceptedMediaTypes) == 0 || config.Artifacts.ManifestSchemaVersion <= 0 || len(config.Artifacts.AllowedTypes) == 0 ||
 		config.Artifacts.MaxFileBytes <= 0 || config.Artifacts.MaxTotalBytes <= 0 {
 		return Snapshot{}, errors.New("profile.yaml has missing or invalid required fields")

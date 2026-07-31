@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,29 +133,90 @@ func TestUploadDeleteRace(t *testing.T) {
 
 	t.Run("upload commits before delete sees complete input", func(t *testing.T) {
 		pool := integrationPool(t)
-		store := NewStore(pool)
+		uploadStore := NewStore(pool)
+		deleteStore := NewStore(pool)
 		objects := newBarrierObjects()
-		service := NewService(store, integrationResolver(t), objects)
+		resolver := integrationResolver(t)
+		uploadService := NewService(uploadStore, resolver, objects)
+		deleteService := NewService(deleteStore, resolver, objects)
 		ctx := context.Background()
-		project, err := service.CreateProject(ctx, "project", "geo-analysis")
+		project, err := uploadService.CreateProject(ctx, "project", "geo-analysis")
 		if err != nil {
 			t.Fatal(err)
 		}
-		input, err := service.UploadInput(ctx, project.ID, "data.csv", "text/csv", strings.NewReader("a,b"))
-		if err != nil {
-			t.Fatal(err)
+		uploadLocked := make(chan struct{})
+		releaseUpload := make(chan struct{})
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(releaseUpload) }) }
+		t.Cleanup(release)
+		uploadStore.afterInputProjectLock = func() {
+			close(uploadLocked)
+			<-releaseUpload
 		}
-		if err := service.DeleteProject(ctx, project.ID); err != nil {
-			t.Fatal(err)
+		type uploadResult struct {
+			input InputFile
+			err   error
+		}
+		uploadDone := make(chan uploadResult, 1)
+		go func() {
+			input, err := uploadService.UploadInput(ctx, project.ID, "data.csv", "text/csv", strings.NewReader("a,b"))
+			uploadDone <- uploadResult{input: input, err: err}
+		}()
+		<-uploadLocked
+
+		deleteStarted := make(chan struct{})
+		deleteDone := make(chan error, 1)
+		go func() {
+			close(deleteStarted)
+			deleteDone <- deleteService.DeleteProject(ctx, project.ID)
+		}()
+		<-deleteStarted
+		waitForBlockedDelete(t, pool, deleteDone)
+		release()
+
+		upload := <-uploadDone
+		if upload.err != nil {
+			t.Fatalf("UploadInput() error = %v", upload.err)
+		}
+		if err := <-deleteDone; err != nil {
+			t.Fatalf("DeleteProject() error = %v", err)
 		}
 		var key string
-		if err := pool.QueryRow(ctx, "SELECT object_key FROM input_files WHERE project_id=$1", project.ID).Scan(&key); err != nil {
+		var deleted bool
+		if err := pool.QueryRow(ctx, `SELECT p.deleted_at IS NOT NULL,f.object_key FROM projects p JOIN input_files f ON f.project_id=p.id WHERE p.id=$1`, project.ID).Scan(&deleted, &key); err != nil {
 			t.Fatal(err)
 		}
-		if key != input.ObjectKey || key != objects.putKey {
-			t.Fatalf("stored key = %q, input=%q, put=%q", key, input.ObjectKey, objects.putKey)
+		if !deleted || key != upload.input.ObjectKey || key != objects.putKey {
+			t.Fatalf("deleted/key = %v/%q, input=%q, put=%q", deleted, key, upload.input.ObjectKey, objects.putKey)
 		}
 	})
+}
+
+func waitForBlockedDelete(t *testing.T, pool *pgxpool.Pool, deleteDone <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-deleteDone:
+			t.Fatalf("DeleteProject completed before upload released its project lock: %v", err)
+		default:
+		}
+		var blocked bool
+		err := pool.QueryRow(context.Background(), `SELECT EXISTS(
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname=current_database()
+			  AND wait_event_type='Lock'
+			  AND query LIKE '%SELECT deleted_at IS NOT NULL FROM projects WHERE id=$1 FOR UPDATE%'
+		)`).Scan(&blocked)
+		if err != nil {
+			t.Fatalf("inspect blocked delete: %v", err)
+		}
+		if blocked {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("DeleteProject did not block on the upload project row lock")
 }
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
