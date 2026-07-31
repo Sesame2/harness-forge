@@ -2,7 +2,7 @@ CREATE TABLE projects (
     id uuid PRIMARY KEY,
     name text NOT NULL,
     profile_id text NOT NULL,
-    profile_version integer NOT NULL,
+    profile_version text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     deleted_at timestamptz

@@ -41,6 +41,7 @@ func TestMigrateInitialSchema(t *testing.T) {
 		assertForeignKey(t, pool, foreignKey[0], foreignKey[1], foreignKey[2], foreignKey[3])
 	}
 	assertNullableColumn(t, pool, "projects", "deleted_at")
+	assertColumnType(t, pool, "projects", "profile_version", "text")
 	assertNullableColumn(t, pool, "conversations", "deleted_at")
 	for _, column := range []string{
 		"status", "phase", "finalized_at", "source_sdk_session_id", "candidate_sdk_session_id", "sandbox_provider", "sandbox_ref",
@@ -177,12 +178,27 @@ func assertNullableColumn(t *testing.T, pool *pgxpool.Pool, table, column string
 	}
 }
 
+func assertColumnType(t *testing.T, pool *pgxpool.Pool, table, column, want string) {
+	t.Helper()
+	var got string
+	err := pool.QueryRow(context.Background(), `
+		SELECT data_type FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2
+	`, table, column).Scan(&got)
+	if err != nil {
+		t.Fatalf("query column type %s.%s: %v", table, column, err)
+	}
+	if got != want {
+		t.Errorf("%s.%s data_type = %q, want %q", table, column, got, want)
+	}
+}
+
 func assertRunConstraints(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO projects (id, name, profile_id, profile_version)
-		VALUES ('00000000-0000-0000-0000-000000000001', 'Project', 'default', 1);
+		VALUES ('00000000-0000-0000-0000-000000000001', 'Project', 'default', 'v1');
 		INSERT INTO conversations (id, project_id, title)
 		VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Conversation');
 		INSERT INTO messages (id, conversation_id, role, content)
