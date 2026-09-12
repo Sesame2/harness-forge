@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"time"
 
 	"harness-forge.local/control-plane/internal/objectstore"
 	"harness-forge.local/control-plane/internal/profiles"
@@ -113,23 +114,27 @@ func (s *Service) UploadInput(ctx context.Context, projectID uuid.UUID, displayN
 	counter := &countWriter{}
 	stream := io.TeeReader(io.LimitReader(reader, snapshot.Artifacts.MaxFileBytes+1), io.MultiWriter(hash, counter))
 	if err := s.objects.Put(ctx, input.ObjectKey, stream, objectstore.PutOptions{ContentType: mediaType}); err != nil {
-		_ = s.objects.Delete(ctx, input.ObjectKey)
-		return InputFile{}, fmt.Errorf("store input object: %w", err)
+		return InputFile{}, s.compensateInput(ctx, input.ObjectKey, fmt.Errorf("store input object: %w", err))
 	}
 	if counter.count > snapshot.Artifacts.MaxFileBytes {
-		_ = s.objects.Delete(ctx, input.ObjectKey)
-		return InputFile{}, fmt.Errorf("%w: input exceeds %d bytes", ErrPayloadTooLarge, snapshot.Artifacts.MaxFileBytes)
+		return InputFile{}, s.compensateInput(ctx, input.ObjectKey, fmt.Errorf("%w: input exceeds %d bytes", ErrPayloadTooLarge, snapshot.Artifacts.MaxFileBytes))
 	}
 	input.SizeBytes, input.SHA256Digest = counter.count, hex.EncodeToString(hash.Sum(nil))
 	objectKey := input.ObjectKey
 	input, err = s.store.SaveInput(ctx, input)
 	if err != nil {
-		if deleteErr := s.objects.Delete(ctx, objectKey); deleteErr != nil {
-			return InputFile{}, errors.Join(err, fmt.Errorf("compensate input object: %w", deleteErr))
-		}
-		return InputFile{}, err
+		return InputFile{}, s.compensateInput(ctx, objectKey, err)
 	}
 	return input, nil
+}
+
+func (s *Service) compensateInput(ctx context.Context, objectKey string, err error) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if deleteErr := s.objects.Delete(cleanupCtx, objectKey); deleteErr != nil {
+		return errors.Join(err, fmt.Errorf("compensate input object: %w", deleteErr))
+	}
+	return err
 }
 
 func (s *Service) ListInputs(ctx context.Context, projectID uuid.UUID) ([]InputFile, error) {

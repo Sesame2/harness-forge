@@ -168,6 +168,74 @@ func TestInputFilePutFailureDoesNotWriteMetadata(t *testing.T) {
 	}
 }
 
+func TestInputFileUploadCompensationSurvivesRequestCancellation(t *testing.T) {
+	putErr := errors.New("put failed")
+	cleanupErr := errors.New("delete failed")
+	for _, tc := range []struct {
+		name       string
+		duringSave bool
+		putErr     error
+		maxBytes   int64
+		wantErr    error
+	}{
+		{name: "after successful put", maxBytes: 3, wantErr: context.Canceled},
+		{name: "during metadata save", duringSave: true, maxBytes: 3, wantErr: context.Canceled},
+		{name: "put failure", putErr: putErr, maxBytes: 3, wantErr: putErr},
+		{name: "oversize", maxBytes: 2, wantErr: ErrPayloadTooLarge},
+	} {
+		for _, deleteErr := range []error{nil, cleanupErr} {
+			name := tc.name + "/cleanup succeeds"
+			if deleteErr != nil {
+				name = tc.name + "/cleanup fails"
+			}
+			t.Run(name, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				store := newFakePersistence()
+				objects := newFakeObjects()
+				objects.putErr, objects.deleteErr = tc.putErr, deleteErr
+				if tc.duringSave {
+					store.beforeSaveInput = cancel
+				} else {
+					objects.afterPut = cancel
+				}
+				objects.beforeDelete = func(cleanupCtx context.Context) {
+					if err := cleanupCtx.Err(); err != nil {
+						t.Errorf("cleanup context is canceled: %v", err)
+					}
+					deadline, ok := cleanupCtx.Deadline()
+					if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 5*time.Second {
+						t.Errorf("cleanup deadline = %v, present = %v; want live deadline within 5s", deadline, ok)
+					}
+				}
+				snapshot := testSnapshot()
+				snapshot.Artifacts.MaxFileBytes = tc.maxBytes
+				service := NewService(store, fakeResolver{snapshot: snapshot}, objects)
+				project, err := service.CreateProject(ctx, "project", "geo-analysis")
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = service.UploadInput(ctx, project.ID, "data.csv", "text/csv", strings.NewReader("a,b"))
+				if !errors.Is(err, tc.wantErr) || (deleteErr != nil && !errors.Is(err, deleteErr)) {
+					t.Errorf("UploadInput() error = %v, want original %v and cleanup %v", err, tc.wantErr, deleteErr)
+				}
+				if ctx.Err() != context.Canceled {
+					t.Fatal("request was not canceled")
+				}
+				if objects.deletedKey == "" || objects.deletedKey != objects.putKey {
+					t.Errorf("compensation key = %q, put key = %q", objects.deletedKey, objects.putKey)
+				}
+				if deleteErr == nil && len(objects.data) != 0 {
+					t.Errorf("orphan object remains: %q", objects.data)
+				}
+				if len(store.inputs) != 0 {
+					t.Errorf("metadata written after upload failure: %#v", store.inputs)
+				}
+			})
+		}
+	}
+}
+
 func TestInputFileUploadFailsClosedWhenPinnedProfileIsMissing(t *testing.T) {
 	store := newFakePersistence()
 	resolver := &versionResolver{snapshot: testSnapshot()}
@@ -204,9 +272,10 @@ func (r *versionResolver) ResolveVersion(string, string) (profiles.Snapshot, err
 }
 
 type fakePersistence struct {
-	projects     map[uuid.UUID]Project
-	inputs       map[uuid.UUID][]InputFile
-	saveInputErr error
+	projects        map[uuid.UUID]Project
+	inputs          map[uuid.UUID][]InputFile
+	saveInputErr    error
+	beforeSaveInput func()
 }
 
 func newFakePersistence() *fakePersistence {
@@ -245,7 +314,13 @@ func (s *fakePersistence) ListProjects(context.Context) ([]Project, error) {
 	}
 	return result, nil
 }
-func (s *fakePersistence) SaveInput(_ context.Context, input InputFile) (InputFile, error) {
+func (s *fakePersistence) SaveInput(ctx context.Context, input InputFile) (InputFile, error) {
+	if s.beforeSaveInput != nil {
+		s.beforeSaveInput()
+	}
+	if err := ctx.Err(); err != nil {
+		return InputFile{}, err
+	}
 	if s.saveInputErr != nil {
 		return InputFile{}, s.saveInputErr
 	}
@@ -286,10 +361,16 @@ type fakeObjects struct {
 	data               []byte
 	putErr             error
 	beforeRead         func()
+	afterPut           func()
+	beforeDelete       func(context.Context)
+	deleteErr          error
 }
 
 func newFakeObjects() *fakeObjects { return &fakeObjects{} }
 func (s *fakeObjects) Put(_ context.Context, key string, reader io.Reader, options objectstore.PutOptions) error {
+	if s.afterPut != nil {
+		defer s.afterPut()
+	}
 	s.putKey = key
 	s.putOptions = options
 	if s.beforeRead != nil {
@@ -305,7 +386,22 @@ func (s *fakeObjects) Put(_ context.Context, key string, reader io.Reader, optio
 func (s *fakeObjects) Open(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(s.data)), nil
 }
-func (s *fakeObjects) Delete(_ context.Context, key string) error { s.deletedKey = key; return nil }
+func (s *fakeObjects) Delete(ctx context.Context, key string) error {
+	s.deletedKey = key
+	if s.beforeDelete != nil {
+		s.beforeDelete(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	if key == s.putKey {
+		s.data = nil
+	}
+	return nil
+}
 func (s *fakeObjects) DeletePrefix(context.Context, string) error { return nil }
 func (s *fakeObjects) Stat(context.Context, string) (objectstore.ObjectInfo, error) {
 	return objectstore.ObjectInfo{}, nil
