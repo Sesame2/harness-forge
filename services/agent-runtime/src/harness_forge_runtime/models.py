@@ -265,6 +265,13 @@ class ArtifactManifest(ContractModel):
     schema_version: Literal[1]
     artifacts: list[ArtifactCandidate]
 
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def require_integer_schema_version(cls, value: Any) -> Any:
+        if type(value) is not int:
+            raise ValueError("schema_version must be an integer")
+        return value
+
     @model_validator(mode="after")
     def enforce_manifest_invariants(self) -> ArtifactManifest:
         names = [artifact.name for artifact in self.artifacts]
