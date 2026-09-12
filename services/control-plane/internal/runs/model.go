@@ -44,6 +44,7 @@ type DomainError struct{ Code, Message string }
 func (e *DomainError) Error() string { return fmt.Sprintf("%s: %s", e.Code, e.Message) }
 
 var (
-	ErrNotFound = &DomainError{Code: "not_found", Message: "run not found"}
-	ErrConflict = &DomainError{Code: "conflict", Message: "run state conflicts with operation"}
+	ErrNotFound    = &DomainError{Code: "not_found", Message: "run not found"}
+	ErrConflict    = &DomainError{Code: "conflict", Message: "run state conflicts with operation"}
+	ErrUnavailable = &DomainError{Code: "unavailable", Message: "run coordinator unavailable"}
 )

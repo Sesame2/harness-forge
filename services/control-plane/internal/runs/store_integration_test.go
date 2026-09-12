@@ -29,6 +29,91 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+func TestListByConversationOwnsRowsAndOrdersCreatedAtThenID(t *testing.T) {
+	pool := integrationPool(t)
+	store := NewStore(pool)
+	ctx := context.Background()
+	first, other := enqueue(t, pool), enqueue(t, pool)
+	for _, id := range []uuid.UUID{uuid.MustParse("00000000-0000-0000-0000-000000000009"), uuid.MustParse("00000000-0000-0000-0000-000000000001")} {
+		message := uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO messages(id,conversation_id,role,content) VALUES($1,$2,'user','again')`, message, first.ConversationID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO runs(id,conversation_id,trigger_message_id,status,created_at) VALUES($1,$2,$3,'queued','2026-01-01')`, id, first.ConversationID, message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE runs SET created_at='2026-01-01' WHERE id=$1`, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ListByConversation(ctx, first.ConversationID)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("%#v %v", got, err)
+	}
+	for _, run := range got {
+		if run.ConversationID != first.ConversationID {
+			t.Fatal("leaked another conversation")
+		}
+	}
+	if got[0].ID.String() != "00000000-0000-0000-0000-000000000001" || got[1].ID.String() != "00000000-0000-0000-0000-000000000009" || got[2].ID != first.ID {
+		t.Fatalf("order %#v", got)
+	}
+	if _, err := store.ListByConversation(ctx, uuid.New()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing conversation %v", err)
+	}
+}
+
+func TestRunCancelQueuedTransactionAndNotification(t *testing.T) {
+	pool := integrationPool(t)
+	broker := NewBroker()
+	store := NewStore(pool, broker)
+	ctx := context.Background()
+	run := enqueue(t, pool)
+	notifications, unsubscribe := broker.Subscribe(ctx, run.ID)
+	defer unsubscribe()
+	got, err := store.CancelQueued(ctx, run.ID)
+	if err != nil || got.Status != Cancelled || got.FinalizedAt == nil {
+		t.Fatalf("%#v %v", got, err)
+	}
+	events, err := store.ListEvents(ctx, run.ID, 0)
+	if err != nil || len(events) != 1 || events[0].Type != "run.cancelled" || events[0].Sequence != 1 {
+		t.Fatalf("%#v %v", events, err)
+	}
+	select {
+	case <-notifications:
+	default:
+		t.Fatal("committed cancellation did not notify")
+	}
+	if _, err := store.CancelQueued(ctx, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	events, _ = store.ListEvents(ctx, run.ID, 0)
+	if len(events) != 1 {
+		t.Fatal("duplicate cancellation event")
+	}
+}
+
+func TestRunCancelQueuedRollsBackStatusWhenEventFails(t *testing.T) {
+	pool := integrationPool(t)
+	store := NewStore(pool)
+	ctx := context.Background()
+	run := enqueue(t, pool)
+	if _, err := pool.Exec(ctx, `ALTER TABLE run_events ADD CONSTRAINT reject_cancel CHECK(type <> 'run.cancelled')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CancelQueued(ctx, run.ID); err == nil {
+		t.Fatal("expected event insert error")
+	}
+	got, err := store.Read(ctx, run.ID)
+	if err != nil || got.Status != Queued || got.FinalizedAt != nil {
+		t.Fatalf("partial commit %#v %v", got, err)
+	}
+	events, _ := store.ListEvents(ctx, run.ID, 0)
+	if len(events) != 0 {
+		t.Fatal(events)
+	}
+}
+
 func seedRun(t *testing.T, pool *pgxpool.Pool) Run {
 	t.Helper()
 	ctx := context.Background()

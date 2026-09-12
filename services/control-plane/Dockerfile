@@ -13,4 +13,5 @@ WORKDIR /app
 COPY --from=builder /src/services/control-plane/harness-forge /usr/local/bin/harness-forge
 COPY contracts/ /app/contracts/
 COPY profiles/ /app/profiles/
+COPY tests/fixtures/fake-runtime/ /app/fixtures/fake-runtime/
 CMD ["/usr/local/bin/harness-forge"]

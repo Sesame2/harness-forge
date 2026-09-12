@@ -40,6 +40,20 @@ func (s *Store) AppendEvent(ctx context.Context, event Event) (Event, error) {
 		return Event{}, fmt.Errorf("begin append event: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	event, err = s.AppendEventTx(ctx, tx, event)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Event{}, fmt.Errorf("commit event: %w", err)
+	}
+	s.broker.Notify(event.RunID)
+	return event, nil
+}
+
+// AppendEventTx reuses the sequence/deduplication primitive inside product-state transactions.
+// Caller commits the transaction and notifies the Broker only after successful commit.
+func (s *Store) AppendEventTx(ctx context.Context, tx pgx.Tx, event Event) (Event, error) {
 	// The Run row serializes all product and Runtime appends for this Run.
 	run, err := scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+` FROM runs WHERE id=$1 FOR UPDATE`, event.RunID))
 	if err != nil {
@@ -63,9 +77,6 @@ func (s *Store) AppendEvent(ctx context.Context, event Event) (Event, error) {
 	event, err = scanEvent(tx.QueryRow(ctx, `INSERT INTO run_events(run_id,sequence,runtime_sequence,type,payload,occurred_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING `+eventColumns, event.RunID, event.Sequence, event.RuntimeSequence, event.Type, event.Payload, event.OccurredAt))
 	if err != nil {
 		return Event{}, fmt.Errorf("insert event: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Event{}, fmt.Errorf("commit event: %w", err)
 	}
 	return event, nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"harness-forge.local/control-plane/internal/conversations"
 	"harness-forge.local/control-plane/internal/projects"
+	"harness-forge.local/control-plane/internal/runs"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -214,10 +215,12 @@ func writeError(response http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, projects.ErrInvalid), errors.Is(err, conversations.ErrInvalid):
 		status, code = http.StatusBadRequest, "bad_request"
-	case errors.Is(err, projects.ErrNotFound), errors.Is(err, conversations.ErrNotFound):
+	case errors.Is(err, projects.ErrNotFound), errors.Is(err, conversations.ErrNotFound), errors.Is(err, runs.ErrNotFound):
 		status, code = http.StatusNotFound, "not_found"
-	case errors.Is(err, projects.ErrConflict), errors.Is(err, conversations.ErrConflict):
+	case errors.Is(err, projects.ErrConflict), errors.Is(err, conversations.ErrConflict), errors.Is(err, runs.ErrConflict):
 		status, code = http.StatusConflict, "conflict"
+	case errors.Is(err, runs.ErrUnavailable):
+		status, code = http.StatusServiceUnavailable, "unavailable"
 	case errors.Is(err, projects.ErrPayloadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "payload_too_large"
 	}

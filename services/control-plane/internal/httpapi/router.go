@@ -4,11 +4,15 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"harness-forge.local/control-plane/internal/runs"
 )
 
 type Dependencies struct {
 	Projects      projectService
 	Conversations conversationService
+	Runs          runReader
+	Canceller     runCanceller
+	Broker        *runs.Broker
 }
 
 func NewRouter(dependencies ...Dependencies) http.Handler {
@@ -43,6 +47,14 @@ func NewRouter(dependencies ...Dependencies) http.Handler {
 			router.Get("/messages", handlers.listMessages)
 			router.Post("/messages", handlers.submitMessage)
 		})
+	}
+	if services.Runs != nil {
+		handlers := runHandlers{store: services.Runs, canceller: services.Canceller, broker: services.Broker}
+		router.Get("/api/v1/conversations/{conversation_id}/runs", handlers.list)
+		router.Get("/api/v1/runs/{run_id}", handlers.read)
+		router.Get("/api/v1/runs/{run_id}/events", handlers.events)
+		router.Get("/api/v1/runs/{run_id}/events/stream", handlers.stream)
+		router.Post("/api/v1/runs/{run_id}/cancel", handlers.cancel)
 	}
 	return router
 }

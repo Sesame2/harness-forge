@@ -25,6 +25,8 @@ type Config struct {
 	RuntimeURL      string
 	WorkspaceRoot   string
 	WebOrigin       string
+	// FakeFixtureRoot is injectable for local tests; deployed fixtures have a fixed /app root.
+	FakeFixtureRoot string
 }
 
 func ConfigFromEnv(getenv func(string) string) (Config, error) {

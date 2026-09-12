@@ -1,0 +1,5 @@
+{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"phase.changed","occurred_at":"2026-07-19T00:00:00Z","payload":{"phase":"agent"}}
+{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":2,"type":"assistant.delta","occurred_at":"2026-07-19T00:00:01Z","payload":{"text":"Preparing the geographic report."}}
+{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":3,"type":"assistant.message","occurred_at":"2026-07-19T00:00:02Z","payload":{"text":"The geographic report is ready."}}
+{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":4,"type":"artifact.candidate","occurred_at":"2026-07-19T00:00:03Z","payload":{"artifacts":[{"name":"report","title":"Geographic report","type":"html","entry":"report/index.html","primary":true}]}}
+{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":5,"type":"agent.completed","occurred_at":"2026-07-19T00:00:04Z","payload":{"candidate_sdk_session_id":"fixture-session","artifacts":[{"name":"report","title":"Geographic report","type":"html","entry":"report/index.html","primary":true}]}}

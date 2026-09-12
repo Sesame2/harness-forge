@@ -13,9 +13,16 @@ import (
 type Store struct {
 	pool           *pgxpool.Pool
 	afterClaimLock func()
+	broker         *Broker
 }
 
-func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+func NewStore(pool *pgxpool.Pool, brokers ...*Broker) *Store {
+	store := &Store{pool: pool}
+	if len(brokers) > 0 {
+		store.broker = brokers[0]
+	}
+	return store
+}
 
 const runColumns = `id,conversation_id,trigger_message_id,status,phase,finalized_at,source_sdk_session_id,candidate_sdk_session_id,sandbox_provider,sandbox_ref,error,created_at,updated_at`
 
@@ -27,6 +34,30 @@ func (s *Store) CreateQueuedTx(ctx context.Context, tx pgx.Tx, run Run) (Run, er
 
 func (s *Store) Read(ctx context.Context, id uuid.UUID) (Run, error) {
 	return scanRun(s.pool.QueryRow(ctx, `SELECT `+runColumns+` FROM runs WHERE id=$1`, id))
+}
+
+func (s *Store) ListByConversation(ctx context.Context, id uuid.UUID) ([]Run, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversations c JOIN projects p ON p.id=c.project_id WHERE c.id=$1 AND c.deleted_at IS NULL AND p.deleted_at IS NULL)`, id).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("read run conversation: %w", err)
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+runColumns+` FROM runs WHERE conversation_id=$1 ORDER BY created_at,id`, id)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation runs: %w", err)
+	}
+	defer rows.Close()
+	runs := []Run{}
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
 }
 
 func (s *Store) ClaimNext(ctx context.Context) (*Run, error) {
