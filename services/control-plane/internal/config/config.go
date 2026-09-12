@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -13,44 +14,47 @@ const (
 )
 
 type Config struct {
-	HTTPAddr        string
-	ArtifactAddr    string
-	DatabaseURL     string
-	MinIOEndpoint   string
-	MinIOAccessKey  string
-	MinIOSecretKey  string
-	MinIOBucket     string
-	ProfileRoot     string
-	SandboxProvider string
-	RuntimeURL      string
-	WorkspaceRoot   string
-	WebOrigin       string
+	ArtifactPublicOrigin string
+	HTTPAddr             string
+	ArtifactAddr         string
+	DatabaseURL          string
+	MinIOEndpoint        string
+	MinIOAccessKey       string
+	MinIOSecretKey       string
+	MinIOBucket          string
+	ProfileRoot          string
+	SandboxProvider      string
+	RuntimeURL           string
+	WorkspaceRoot        string
+	WebOrigin            string
 	// FakeFixtureRoot is injectable for local tests; deployed fixtures have a fixed /app root.
 	FakeFixtureRoot string
 }
 
 func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	config := Config{
-		HTTPAddr:        valueOrDefault(getenv("HTTP_ADDR"), ":8080"),
-		ArtifactAddr:    valueOrDefault(getenv("ARTIFACT_ADDR"), ":8081"),
-		DatabaseURL:     getenv("DATABASE_URL"),
-		MinIOEndpoint:   getenv("MINIO_ENDPOINT"),
-		MinIOAccessKey:  getenv("MINIO_ACCESS_KEY"),
-		MinIOSecretKey:  getenv("MINIO_SECRET_KEY"),
-		MinIOBucket:     getenv("MINIO_BUCKET"),
-		ProfileRoot:     getenv("PROFILE_ROOT"),
-		SandboxProvider: valueOrDefault(getenv("SANDBOX_PROVIDER"), DockerSandboxProvider),
-		WorkspaceRoot:   valueOrDefault(getenv("WORKSPACE_ROOT"), "/workspaces"),
-		WebOrigin:       getenv("WEB_ORIGIN"),
+		ArtifactPublicOrigin: getenv("ARTIFACT_PUBLIC_ORIGIN"),
+		HTTPAddr:             valueOrDefault(getenv("HTTP_ADDR"), ":8080"),
+		ArtifactAddr:         valueOrDefault(getenv("ARTIFACT_ADDR"), ":8081"),
+		DatabaseURL:          getenv("DATABASE_URL"),
+		MinIOEndpoint:        getenv("MINIO_ENDPOINT"),
+		MinIOAccessKey:       getenv("MINIO_ACCESS_KEY"),
+		MinIOSecretKey:       getenv("MINIO_SECRET_KEY"),
+		MinIOBucket:          getenv("MINIO_BUCKET"),
+		ProfileRoot:          getenv("PROFILE_ROOT"),
+		SandboxProvider:      valueOrDefault(getenv("SANDBOX_PROVIDER"), DockerSandboxProvider),
+		WorkspaceRoot:        valueOrDefault(getenv("WORKSPACE_ROOT"), "/workspaces"),
+		WebOrigin:            getenv("WEB_ORIGIN"),
 	}
 
 	for name, value := range map[string]string{
-		"DATABASE_URL":     config.DatabaseURL,
-		"MINIO_ENDPOINT":   config.MinIOEndpoint,
-		"MINIO_ACCESS_KEY": config.MinIOAccessKey,
-		"MINIO_SECRET_KEY": config.MinIOSecretKey,
-		"MINIO_BUCKET":     config.MinIOBucket,
-		"PROFILE_ROOT":     config.ProfileRoot,
+		"ARTIFACT_PUBLIC_ORIGIN": config.ArtifactPublicOrigin,
+		"DATABASE_URL":           config.DatabaseURL,
+		"MINIO_ENDPOINT":         config.MinIOEndpoint,
+		"MINIO_ACCESS_KEY":       config.MinIOAccessKey,
+		"MINIO_SECRET_KEY":       config.MinIOSecretKey,
+		"MINIO_BUCKET":           config.MinIOBucket,
+		"PROFILE_ROOT":           config.ProfileRoot,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return Config{}, fmt.Errorf("%s is required", name)
@@ -76,14 +80,31 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("SANDBOX_PROVIDER must be docker or fake, got %q", config.SandboxProvider)
 	}
 
-	if config.WebOrigin != "" {
-		parsed, err := url.Parse(config.WebOrigin)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return Config{}, fmt.Errorf("WEB_ORIGIN must be an absolute URL")
+	for name, origin := range map[string]string{"ARTIFACT_PUBLIC_ORIGIN": config.ArtifactPublicOrigin, "WEB_ORIGIN": config.WebOrigin} {
+		if origin == "" && name == "WEB_ORIGIN" {
+			continue
+		}
+		if !validOrigin(origin) {
+			return Config{}, fmt.Errorf("%s must be an absolute HTTP(S) origin without path, userinfo, query or fragment", name)
 		}
 	}
 
 	return config, nil
+}
+
+func validOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Path != "" || u.Opaque != "" || strings.ContainsAny(origin, "?#") {
+		return false
+	}
+	if net.ParseIP(u.Hostname()) == nil {
+		for _, ch := range u.Hostname() {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '.' || ch == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func valueOrDefault(value, fallback string) string {

@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"time"
 
+	"harness-forge.local/control-plane/internal/artifacthttp"
+	"harness-forge.local/control-plane/internal/artifacts"
 	"harness-forge.local/control-plane/internal/config"
 	"harness-forge.local/control-plane/internal/conversations"
 	"harness-forge.local/control-plane/internal/httpapi"
@@ -51,9 +56,34 @@ func main() {
 	canceller := runs.NewCanceller(runStore, nil)
 	log.Printf("sandbox provider configured: %s", binding.ID)
 
-	log.Printf("control plane listening on %s", applicationConfig.HTTPAddr)
-	err = http.ListenAndServe(applicationConfig.HTTPAddr, httpapi.NewRouter(httpapi.Dependencies{Projects: projectService, Conversations: conversationService, Runs: runStore, Canceller: canceller, Broker: broker}))
+	artifactStore := artifacts.NewStore(pool)
+	err = serveListeners(applicationConfig.HTTPAddr, applicationConfig.ArtifactAddr,
+		httpapi.NewRouter(httpapi.Dependencies{Projects: projectService, Conversations: conversationService, Runs: runStore, Canceller: canceller, Broker: broker, Artifacts: artifactStore, ArtifactPublicOrigin: applicationConfig.ArtifactPublicOrigin}),
+		artifacthttp.NewServer(artifactStore, objects, applicationConfig.WebOrigin))
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// Bind both ports before serving either; a failed gateway must fail startup.
+func serveListeners(controlAddr, artifactAddr string, control, gateway http.Handler) error {
+	controlListener, err := net.Listen("tcp", controlAddr)
+	if err != nil {
+		return fmt.Errorf("bind control plane: %w", err)
+	}
+	defer controlListener.Close()
+	artifactListener, err := net.Listen("tcp", artifactAddr)
+	if err != nil {
+		return fmt.Errorf("bind artifact gateway: %w", err)
+	}
+	defer artifactListener.Close()
+	controlServer := &http.Server{Handler: control, ReadHeaderTimeout: 5 * time.Second}
+	defer controlServer.Close()
+	artifactServer := &http.Server{Handler: gateway, ReadHeaderTimeout: 5 * time.Second}
+	defer artifactServer.Close()
+	log.Printf("control plane listening on %s; artifact gateway on %s", controlListener.Addr(), artifactListener.Addr())
+	errors := make(chan error, 2)
+	go func() { errors <- controlServer.Serve(controlListener) }()
+	go func() { errors <- artifactServer.Serve(artifactListener) }()
+	return <-errors
 }

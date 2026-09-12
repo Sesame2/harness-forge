@@ -85,6 +85,7 @@ services:
       RUNTIME_URL: ${RUNTIME_URL:-http://agent-runtime:8090}
       WORKSPACE_ROOT: ${WORKSPACE_ROOT:-/workspaces}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      ARTIFACT_PUBLIC_ORIGIN: ${ARTIFACT_PUBLIC_ORIGIN:-http://localhost:8081}
     volumes:
       - run-workspaces:/workspaces
     depends_on:

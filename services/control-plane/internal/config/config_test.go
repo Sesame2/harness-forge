@@ -7,18 +7,19 @@ import (
 
 func TestConfigFromEnvMapsCompleteConfiguration(t *testing.T) {
 	env := map[string]string{
-		"HTTP_ADDR":        ":9000",
-		"ARTIFACT_ADDR":    ":9001",
-		"DATABASE_URL":     "postgres://user:pass@postgres/db",
-		"MINIO_ENDPOINT":   "minio:9000",
-		"MINIO_ACCESS_KEY": "access",
-		"MINIO_SECRET_KEY": "secret",
-		"MINIO_BUCKET":     "artifacts",
-		"PROFILE_ROOT":     "/tmp/profiles",
-		"SANDBOX_PROVIDER": "fake",
-		"RUNTIME_URL":      "http://agent-runtime:8090",
-		"WORKSPACE_ROOT":   "/tmp/workspaces",
-		"WEB_ORIGIN":       "http://localhost:5173",
+		"HTTP_ADDR":              ":9000",
+		"ARTIFACT_ADDR":          ":9001",
+		"DATABASE_URL":           "postgres://user:pass@postgres/db",
+		"MINIO_ENDPOINT":         "minio:9000",
+		"MINIO_ACCESS_KEY":       "access",
+		"MINIO_SECRET_KEY":       "secret",
+		"MINIO_BUCKET":           "artifacts",
+		"PROFILE_ROOT":           "/tmp/profiles",
+		"SANDBOX_PROVIDER":       "fake",
+		"RUNTIME_URL":            "http://agent-runtime:8090",
+		"WORKSPACE_ROOT":         "/tmp/workspaces",
+		"WEB_ORIGIN":             "http://localhost:5173",
+		"ARTIFACT_PUBLIC_ORIGIN": "http://localhost:8081",
 	}
 
 	got, err := ConfigFromEnv(func(key string) string { return env[key] })
@@ -27,18 +28,19 @@ func TestConfigFromEnvMapsCompleteConfiguration(t *testing.T) {
 	}
 
 	want := Config{
-		HTTPAddr:        ":9000",
-		ArtifactAddr:    ":9001",
-		DatabaseURL:     "postgres://user:pass@postgres/db",
-		MinIOEndpoint:   "minio:9000",
-		MinIOAccessKey:  "access",
-		MinIOSecretKey:  "secret",
-		MinIOBucket:     "artifacts",
-		ProfileRoot:     "/tmp/profiles",
-		SandboxProvider: "fake",
-		RuntimeURL:      "",
-		WorkspaceRoot:   "/tmp/workspaces",
-		WebOrigin:       "http://localhost:5173",
+		HTTPAddr:             ":9000",
+		ArtifactAddr:         ":9001",
+		DatabaseURL:          "postgres://user:pass@postgres/db",
+		MinIOEndpoint:        "minio:9000",
+		MinIOAccessKey:       "access",
+		MinIOSecretKey:       "secret",
+		MinIOBucket:          "artifacts",
+		ProfileRoot:          "/tmp/profiles",
+		SandboxProvider:      "fake",
+		RuntimeURL:           "",
+		WorkspaceRoot:        "/tmp/workspaces",
+		WebOrigin:            "http://localhost:5173",
+		ArtifactPublicOrigin: "http://localhost:8081",
 	}
 	if got != want {
 		t.Fatalf("ConfigFromEnv() = %#v, want %#v", got, want)
@@ -205,15 +207,33 @@ func TestConfigFromEnvRejectsUnsupportedSandboxProvider(t *testing.T) {
 
 func validEnvironment() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":     "postgres://user:pass@postgres/db",
-		"MINIO_ENDPOINT":   "minio:9000",
-		"MINIO_ACCESS_KEY": "access",
-		"MINIO_SECRET_KEY": "secret",
-		"MINIO_BUCKET":     "artifacts",
-		"PROFILE_ROOT":     "/app/profiles",
-		"RUNTIME_URL":      "http://agent-runtime:8090",
-		"WEB_ORIGIN":       "http://localhost:5173",
+		"DATABASE_URL":           "postgres://user:pass@postgres/db",
+		"MINIO_ENDPOINT":         "minio:9000",
+		"MINIO_ACCESS_KEY":       "access",
+		"MINIO_SECRET_KEY":       "secret",
+		"MINIO_BUCKET":           "artifacts",
+		"PROFILE_ROOT":           "/app/profiles",
+		"RUNTIME_URL":            "http://agent-runtime:8090",
+		"WEB_ORIGIN":             "http://localhost:5173",
+		"ARTIFACT_PUBLIC_ORIGIN": "http://localhost:8081",
 	}
+}
+
+func TestArtifactAndWebOriginsMustBeAbsoluteHTTPOrigins(t *testing.T) {
+	for _, key := range []string{"ARTIFACT_PUBLIC_ORIGIN", "WEB_ORIGIN"} {
+		for _, origin := range []string{"https://a.example/path", "https://a.example/", "ftp://a.example", "https://user:pass@a.example", "https://a.example?x=1", "https://a.example#fragment", "https://a.example?", "https://a.example#", "//a.example", "https:///", "https://a.example;evil", "https://a.example 'unsafe-inline'", "http://a.example:bad"} {
+			t.Run(key+"/"+origin, func(t *testing.T) {
+				env := validEnvironment()
+				env[key] = origin
+				_, err := ConfigFromEnv(func(name string) string { return env[name] })
+				assertNamedError(t, err, key)
+			})
+		}
+	}
+	env := validEnvironment()
+	delete(env, "ARTIFACT_PUBLIC_ORIGIN")
+	_, err := ConfigFromEnv(func(name string) string { return env[name] })
+	assertNamedError(t, err, "ARTIFACT_PUBLIC_ORIGIN")
 }
 
 func assertNamedError(t *testing.T, err error, name string) {
