@@ -14,7 +14,8 @@
 - Task 9：完成；`ef49ddb`，独立规格/质量审查、本机测试和容器联调通过。
 - Task 10：完成；主体 `13016e5`，审查修复 `dd3b046` / `ca2b9d3` / `1c76254`；独立规格与质量审查均通过，最新固定提交本机全量测试/容器联调通过。
 - Task 11：完成；`bdca98b` 与测试补充 `86c744c`，规格/质量审查与真实 CLI 验收通过。
-- Task 12–16：待实施；Python execution store、Workspace、SDK Session、worker、Geo Profile/smoke。
+- Task 12：完成；`5c38e84`，规格/质量审查、77 项 Python 测试和真实容器持久化验证通过。
+- Task 13–16：待实施；Workspace、SDK Session、worker、Geo Profile/smoke。
 - Task 17–21：待实施；三栏前端、产品操作、SSE、Artifact 展示、Fake E2E。
 - Task 22：待实施；中文交付文档、本机干净检出与第二环境验收。
 
@@ -132,3 +133,13 @@ Task 11 当前实施约定：Runtime 清理任何一步失败都不提前 Releas
 规格审查仅发现 typed NotFound 幂等分支缺少 Purger 层测试，已交回原实现者补充；生产逻辑未发现偏差。仍待规格复审和质量审查，不能将 Task 11 勾选完成。后续按 Task 12 开始 execution store，继续全部已批准任务。
 
 以上待审状态已关闭：`86c744c` 补充 typed NotFound 表驱动回归，规格复审和独立质量审查均通过，无 Critical/Important/Minor。父级该提交 cleanup race 与统一 `make test` 通过（Go、Python 55、Web 2）。整 Project 清理后的 PG/MinIO/Workspace/Gateway 检查通过，重复 apply 为 0。下一任务为 Task 12；本机真实 Claude 验收仍未运行。
+
+主分支 `main` 与 `origin/main` 已同步至 `1fdf73e`；main 独立 Go 全量测试通过后 push 成功。Task 12 新实现者已开始，父级继续拥有计划/checkpoint 文档修改。
+
+## Task 12 固定提交验证
+
+实现冻结 `5c38e84`：父级独立全量 Python 77 项通过，Ruff/mypy 通过。执行记录不可变、baseline 使用 tuple，candidate 一经记录不可替换；任何写盘不确定会关闭 Store，必须重新扫描后才能继续操作。规格审查通过，质量审查进行中。
+
+原始 Compose 显式 Fake/空 Claude 凭证重建 Runtime，UID/GID 10001:10001，服务 healthy。父级在该持久卷独立测试目录 reserve，重启容器后重新实例化 Store 读到 starting，再 awaiting_finalize→abort→删除两次；真实 HTTP GET executions 返回空数组、缺失 DELETE 返回 204、health 正常。测试目录已清理，默认 execution root 未注入记录。此验证不代表 Task 15 的 worker 崩溃恢复已交付。
+
+质量审查通过，无 Critical/Important/Minor；Task 12 完成。接下来直接执行 Task 13，复用现有 Pydantic Manifest 模型，Runtime 只校验 Go 已准备的 Workspace，不重复创建、下载或复制。

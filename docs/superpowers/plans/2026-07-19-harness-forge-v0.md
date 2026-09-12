@@ -1040,17 +1040,17 @@ git commit -m "feat: purge logically deleted project data"
 - Modify: `services/agent-runtime/src/harness_forge_runtime/api.py`
 - Create: `services/agent-runtime/tests/test_execution_api.py`
 
-- [ ] **Step 1: 写 execution lifecycle 失败测试**
+- [x] **Step 1: 写 execution lifecycle 失败测试**
 
 Settings 测试固定 `RUNTIME_STATE_ROOT=/sessions/executions`、`CLAUDE_CONFIG_DIR=/sessions/claude`、`RUN_WORKSPACE_ROOT=/workspaces`，要求均为绝对路径，前两者互不嵌套且位于 mounted `/sessions` root。Record 固定字段为 `run_id`、source/candidate Session ID、可空 `candidate_durable_at`、启动前 `baseline_session_ids`、`worker_pid/pgid`、`lifecycle`、timestamps 和可空 disposition；`lifecycle` 只允许 `starting|running|awaiting_finalize|committed|aborted`。覆盖原子 reserve、同/不同 Run 冲突、starting→running→awaiting_finalize、candidate/PGID/durable marker 更新、commit/abort tombstone、冲突 decision、删除 tombstone、unfinalized 时拒删、重启扫描，以及最多一个 starting/running/awaiting_finalize。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd services/agent-runtime && uv run pytest tests/test_settings.py tests/test_execution_store.py tests/test_execution_api.py -v`
 
 Expected: FAIL，ExecutionStore/API 尚不存在。
 
-- [ ] **Step 3: 实现原子文件模型和 API**
+- [x] **Step 3: 实现原子文件模型和 API**
 
 只有 FastAPI 父进程可修改 execution record；worker 只能经 Task 15 control pipe 报告数据。每次写入同目录临时 JSON，flush + `os.fsync(file)`，`os.replace` 后打开父目录 `fsync`。Store 使用 async lock，启动扫描验证最多一个 unfinalized record；record root 由配置固定，run_id 先按 UUID 解析。
 
@@ -1058,7 +1058,7 @@ Expected: FAIL，ExecutionStore/API 尚不存在。
 
 Compose 和 `.env.example` 给 Runtime 注入上述三个目录；前两个落在 `runtime-sessions` named volume，workspace root 落在共享 `run-workspaces` volume。SDK 进程继承 `CLAUDE_CONFIG_DIR`，因此 Session 可跨 container restart且不落到 ephemeral home。
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 ```bash
 cd services/agent-runtime
