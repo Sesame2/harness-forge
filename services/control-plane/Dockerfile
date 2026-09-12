@@ -8,10 +8,13 @@ RUN CGO_ENABLED=0 go build ./cmd/harness-forge
 
 FROM alpine:3.22
 
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl \
+    && addgroup -g 10001 app \
+    && adduser -D -u 10001 -G app app
 WORKDIR /app
 COPY --from=builder /src/services/control-plane/harness-forge /usr/local/bin/harness-forge
 COPY contracts/ /app/contracts/
 COPY profiles/ /app/profiles/
 COPY tests/fixtures/fake-runtime/ /app/fixtures/fake-runtime/
+USER 10001:10001
 CMD ["/usr/local/bin/harness-forge"]

@@ -6,6 +6,7 @@ type Snapshot struct {
 	DisplayName             string
 	SystemPrompt            string
 	AllowedTools            []string
+	DisallowedTools         []string
 	PermissionMode          string
 	Agent                   AgentPolicy
 	AcceptedInputMediaTypes []string

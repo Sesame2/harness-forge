@@ -48,6 +48,15 @@ services:
         condition: service_healthy
     restart: "no"
 
+  runtime-volume-init:
+    image: alpine:3.22
+    user: "0:0"
+    command: ["sh", "-ec", "mkdir -p /workspaces /sessions/executions /sessions/claude; chown 10001:10001 /workspaces /sessions /sessions/executions /sessions/claude; chmod 0770 /workspaces /sessions /sessions/executions /sessions/claude"]
+    volumes:
+      - run-workspaces:/workspaces
+      - runtime-sessions:/sessions
+    restart: "no"
+
   agent-runtime:
     build:
       context: ./services/agent-runtime
@@ -61,6 +70,9 @@ services:
     volumes:
       - run-workspaces:/workspaces
       - runtime-sessions:/sessions
+    depends_on:
+      runtime-volume-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 2s
@@ -92,6 +104,8 @@ services:
       postgres:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      runtime-volume-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

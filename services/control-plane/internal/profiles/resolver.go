@@ -6,13 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 var ErrNotFound = errors.New("profile not found")
@@ -29,6 +28,7 @@ type profileConfig struct {
 	WorkspaceTemplate string `yaml:"workspace_template"`
 	Tools             struct {
 		Allowed        []string `yaml:"allowed"`
+		Disallowed     []string `yaml:"disallowed"`
 		PermissionMode string   `yaml:"permission_mode"`
 	} `yaml:"tools"`
 	Agent struct {
@@ -132,6 +132,7 @@ func loadSnapshot(root, directory string) (Snapshot, error) {
 	return Snapshot{
 		ID: config.ID, Version: config.Version, DisplayName: config.DisplayName, SystemPrompt: string(prompt),
 		AllowedTools: append([]string(nil), config.Tools.Allowed...), PermissionMode: config.Tools.PermissionMode,
+		DisallowedTools:         append([]string(nil), config.Tools.Disallowed...),
 		Agent:                   AgentPolicy{MaxTurns: config.Agent.MaxTurns, MaxBudgetUSD: config.Agent.MaxBudgetUSD},
 		AcceptedInputMediaTypes: append([]string(nil), config.Inputs.AcceptedMediaTypes...),
 		Artifacts:               ArtifactPolicy{ManifestSchemaVersion: config.Artifacts.ManifestSchemaVersion, AllowedTypes: append([]string(nil), config.Artifacts.AllowedTypes...), MaxFileBytes: config.Artifacts.MaxFileBytes, MaxTotalBytes: config.Artifacts.MaxTotalBytes},
@@ -192,6 +193,7 @@ func writeDigestPart(hash interface{ Write([]byte) (int, error) }, name string, 
 
 func clone(snapshot Snapshot) Snapshot {
 	snapshot.AllowedTools = append([]string(nil), snapshot.AllowedTools...)
+	snapshot.DisallowedTools = append([]string(nil), snapshot.DisallowedTools...)
 	snapshot.AcceptedInputMediaTypes = append([]string(nil), snapshot.AcceptedInputMediaTypes...)
 	snapshot.Artifacts.AllowedTypes = append([]string(nil), snapshot.Artifacts.AllowedTypes...)
 	snapshot.WorkspaceTemplate = append([]WorkspaceFile(nil), snapshot.WorkspaceTemplate...)

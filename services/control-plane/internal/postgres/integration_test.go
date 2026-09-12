@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"harness-forge.local/control-plane/internal/testsupport"
-
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"harness-forge.local/control-plane/internal/testsupport"
 )
 
 func TestMigrateInitialSchema(t *testing.T) {
@@ -25,7 +25,7 @@ func TestMigrateInitialSchema(t *testing.T) {
 		t.Fatalf("second migration: %v", err)
 	}
 
-	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 2)
+	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 3)
 	assertTables(t, pool, []string{
 		"artifacts", "conversations", "input_files", "messages", "projects", "run_events", "runs",
 	})
@@ -33,6 +33,7 @@ func TestMigrateInitialSchema(t *testing.T) {
 		{"input_files", "project_id", "projects", "id"},
 		{"conversations", "project_id", "projects", "id"},
 		{"messages", "conversation_id", "conversations", "id"},
+		{"messages", "run_id", "runs", "id"},
 		{"runs", "conversation_id", "conversations", "id"},
 		{"runs", "trigger_message_id", "messages", "id"},
 		{"run_events", "run_id", "runs", "id"},
@@ -43,6 +44,9 @@ func TestMigrateInitialSchema(t *testing.T) {
 	assertNullableColumn(t, pool, "projects", "deleted_at")
 	assertColumnType(t, pool, "projects", "profile_version", "text")
 	assertNullableColumn(t, pool, "conversations", "deleted_at")
+	assertNullableColumn(t, pool, "messages", "run_id")
+	assertNullableColumn(t, pool, "messages", "runtime_sequence")
+	assertNullableColumn(t, pool, "run_events", "dedupe_key")
 	for _, column := range []string{
 		"status", "phase", "finalized_at", "source_sdk_session_id", "candidate_sdk_session_id", "sandbox_provider", "sandbox_ref",
 	} {
@@ -76,7 +80,7 @@ func TestMigrateConcurrentCalls(t *testing.T) {
 			t.Errorf("concurrent migration: %v", err)
 		}
 	}
-	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 2)
+	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 3)
 }
 
 func assertCount(t *testing.T, pool *pgxpool.Pool, query string, want int) {

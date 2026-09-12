@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type cancelStore interface {
@@ -77,7 +78,8 @@ func (s *Store) CancelQueued(ctx context.Context, id uuid.UUID) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-	if _, err := s.AppendEventTx(ctx, tx, Event{RunID: id, Type: "run.cancelled", Payload: []byte(`{}`), OccurredAt: run.UpdatedAt}); err != nil {
+	key := "terminal:cancelled"
+	if _, err := s.AppendEventTx(ctx, tx, Event{RunID: id, Type: "run.cancelled", Payload: []byte(`{}`), OccurredAt: run.UpdatedAt, DedupeKey: &key}); err != nil {
 		return Run{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

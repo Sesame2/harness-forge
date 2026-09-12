@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type Event struct {
 	RunID           uuid.UUID       `json:"run_id"`
 	Sequence        int64           `json:"sequence"`
 	RuntimeSequence *int64          `json:"-"`
+	DedupeKey       *string         `json:"-"`
 	Type            string          `json:"type"`
 	Payload         json.RawMessage `json:"payload"`
 	OccurredAt      time.Time       `json:"occurred_at"`
@@ -32,7 +34,7 @@ func validateEvent(run Run, event Event) error {
 	return nil
 }
 
-const eventColumns = `run_id,sequence,runtime_sequence,type,payload,occurred_at`
+const eventColumns = `run_id,sequence,runtime_sequence,type,payload,occurred_at,dedupe_key`
 
 func (s *Store) AppendEvent(ctx context.Context, event Event) (Event, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -68,13 +70,22 @@ func (s *Store) AppendEventTx(ctx context.Context, tx pgx.Tx, event Event) (Even
 			return Event{}, fmt.Errorf("read duplicate event: %w", err)
 		}
 	}
+	if event.DedupeKey != nil {
+		existing, err := scanEvent(tx.QueryRow(ctx, `SELECT `+eventColumns+` FROM run_events WHERE run_id=$1 AND dedupe_key=$2`, event.RunID, *event.DedupeKey))
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Event{}, err
+		}
+	}
 	if err := validateEvent(run, event); err != nil {
 		return Event{}, err
 	}
 	if err := tx.QueryRow(ctx, `UPDATE runs SET next_event_sequence=next_event_sequence+1 WHERE id=$1 RETURNING next_event_sequence-1`, event.RunID).Scan(&event.Sequence); err != nil {
 		return Event{}, fmt.Errorf("allocate event sequence: %w", err)
 	}
-	event, err = scanEvent(tx.QueryRow(ctx, `INSERT INTO run_events(run_id,sequence,runtime_sequence,type,payload,occurred_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING `+eventColumns, event.RunID, event.Sequence, event.RuntimeSequence, event.Type, event.Payload, event.OccurredAt))
+	event, err = scanEvent(tx.QueryRow(ctx, `INSERT INTO run_events(run_id,sequence,runtime_sequence,type,payload,occurred_at,dedupe_key) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING `+eventColumns, event.RunID, event.Sequence, event.RuntimeSequence, event.Type, event.Payload, event.OccurredAt, event.DedupeKey))
 	if err != nil {
 		return Event{}, fmt.Errorf("insert event: %w", err)
 	}
@@ -103,6 +114,6 @@ func (s *Store) ListEvents(ctx context.Context, id uuid.UUID, after int64) ([]Ev
 
 func scanEvent(row rowScanner) (Event, error) {
 	var event Event
-	err := row.Scan(&event.RunID, &event.Sequence, &event.RuntimeSequence, &event.Type, &event.Payload, &event.OccurredAt)
+	err := row.Scan(&event.RunID, &event.Sequence, &event.RuntimeSequence, &event.Type, &event.Payload, &event.OccurredAt, &event.DedupeKey)
 	return event, err
 }

@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"harness-forge.local/control-plane/internal/postgres"
-	"harness-forge.local/control-plane/internal/testsupport"
-	"harness-forge.local/control-plane/migrations"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"harness-forge.local/control-plane/internal/postgres"
+	"harness-forge.local/control-plane/internal/testsupport"
+	"harness-forge.local/control-plane/migrations"
 )
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
@@ -78,6 +78,9 @@ func TestRunCancelQueuedTransactionAndNotification(t *testing.T) {
 	events, err := store.ListEvents(ctx, run.ID, 0)
 	if err != nil || len(events) != 1 || events[0].Type != "run.cancelled" || events[0].Sequence != 1 {
 		t.Fatalf("%#v %v", events, err)
+	}
+	if events[0].DedupeKey == nil || *events[0].DedupeKey != "terminal:cancelled" {
+		t.Fatal("missing terminal deduplication key")
 	}
 	select {
 	case <-notifications:

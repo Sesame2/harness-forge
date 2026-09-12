@@ -226,3 +226,23 @@ func validProfileYAML(id, version string) string {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestDisallowedToolsArePreservedAndCloned(t *testing.T) {
+	root := writeProfileFixture(t, "geo-analysis", strings.Replace(validProfileYAML("geo-analysis", "1"), "tools:\n", "tools:\n  disallowed: [WebSearch]\n", 1), "prompt", map[string]string{"README.md": "template"})
+	r, err := NewResolver(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := r.Resolve("geo-analysis")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first.DisallowedTools, []string{"WebSearch"}) {
+		t.Fatal(first.DisallowedTools)
+	}
+	first.DisallowedTools[0] = "mutated"
+	second, _ := r.Resolve("geo-analysis")
+	if second.DisallowedTools[0] != "WebSearch" {
+		t.Fatal("snapshot alias")
+	}
+}

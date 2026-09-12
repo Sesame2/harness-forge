@@ -20,6 +20,7 @@ import (
 	"harness-forge.local/control-plane/internal/projects"
 	"harness-forge.local/control-plane/internal/runs"
 	"harness-forge.local/control-plane/internal/sandbox"
+	"harness-forge.local/control-plane/internal/workspaces"
 )
 
 func main() {
@@ -51,9 +52,14 @@ func main() {
 	broker := runs.NewBroker()
 	runStore := runs.NewStore(pool, broker)
 	conversationService := conversations.NewService(conversations.NewStore(pool), runStore)
-	// Task10 supplies the Coordinator-owned active cancellation callback and consumes this binding.
-	// Until then queued cancellation works; active cancellation explicitly returns 503.
-	canceller := runs.NewCanceller(runStore, nil)
+	materializer := workspaces.NewMaterializer(applicationConfig.WorkspaceRoot, objects)
+	coordinator := runs.NewCoordinator(runStore, profileResolver, materializer, binding, artifacts.NewPublisher(pool, objects))
+	reconciler := runs.NewReconciler(runStore, binding, materializer)
+	scheduler := runs.NewScheduler(runStore, coordinator, reconciler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go scheduler.Run(ctx)
+	canceller := runs.NewCanceller(runStore, coordinator.Cancel)
 	log.Printf("sandbox provider configured: %s", binding.ID)
 
 	artifactStore := artifacts.NewStore(pool)
