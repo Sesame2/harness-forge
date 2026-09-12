@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"harness-forge.local/control-plane/internal/agentexec"
 	"harness-forge.local/control-plane/internal/artifacts"
@@ -179,6 +181,103 @@ func TestSchedulerRecoversItsReturnedRunWhenFailurePersistenceFailed(t *testing.
 		case <-ctx.Done():
 			<-done
 			t.Fatal("returned running residue was never reconciled")
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+type lostClaimCommitAck struct {
+	armed     atomic.Bool
+	committed chan error
+}
+
+func (p *lostClaimCommitAck) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if data.SQL == "commit" && p.armed.CompareAndSwap(true, false) {
+		// Commit through pgconn first (bypassing this pgx tracer), then cancel
+		// only the outward COMMIT call: durable success with an uncertain ACK.
+		_, err := conn.PgConn().Exec(ctx, "commit").ReadAll()
+		p.committed <- err
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		return cancelled
+	}
+	return ctx
+}
+func (*lostClaimCommitAck) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestSchedulerRecoversClaimCommittedWithoutAcknowledgement(t *testing.T) {
+	pool := integrationPool(t)
+	run := enqueue(t, pool)
+	next := enqueue(t, pool)
+	tracer := &lostClaimCommitAck{committed: make(chan error, 1)}
+	tracer.armed.Store(true)
+	config := pool.Config()
+	config.ConnConfig.Tracer = tracer
+	claimPool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claimPool.Close()
+	s := NewStore(claimPool)
+	provider, err := sandbox.NewFakeProvider("../../../../tests/fixtures/fake-runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := objectstore.NewMemory()
+	materializer := workspaces.NewMaterializer(t.TempDir(), objects)
+	t.Cleanup(func() { _ = os.Chmod(materializer.Paths(next.ID).Inputs, 0770) })
+	resolver, err := profiles.NewResolver("../../../../profiles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := sandbox.Binding{ID: sandbox.Fake, Provider: provider}
+	coordinator := NewCoordinator(s, resolver, materializer, binding, artifacts.NewPublisher(claimPool, objects))
+	scheduler := NewScheduler(s, coordinator, NewReconciler(s, binding, materializer))
+	scheduler.retry = time.Millisecond
+	scheduler.poll = time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { scheduler.Run(ctx); close(done) }()
+	select {
+	case err := <-tracer.committed:
+		if err != nil {
+			cancel()
+			<-done
+			t.Fatal("server COMMIT failed:", err)
+		}
+	case <-ctx.Done():
+		<-done
+		t.Fatal("claim never committed")
+	}
+	for {
+		got, err := NewStore(pool).Read(context.Background(), run.ID)
+		if err != nil {
+			cancel()
+			<-done
+			t.Fatal(err)
+		}
+		following, err := NewStore(pool).Read(context.Background(), next.ID)
+		if err != nil {
+			cancel()
+			<-done
+			t.Fatal(err)
+		}
+		if got.FinalizedAt != nil && following.FinalizedAt != nil {
+			cancel()
+			<-done
+			if got.Status != Interrupted || got.SandboxProvider != nil {
+				t.Fatal("uncertain claim executed or was not interrupted", got)
+			}
+			if following.Status != Succeeded {
+				t.Fatal("queue did not advance after uncertain claim", following)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			<-done
+			t.Fatal("committed claim stranded without Execute")
 		case <-time.After(time.Millisecond):
 		}
 	}

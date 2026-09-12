@@ -46,6 +46,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.ready.Store(true)
 		run, err := s.store.ClaimNext(ctx)
 		if err != nil {
+			// COMMIT may have succeeded despite a lost acknowledgement. No
+			// Execute has started, so reconcile any newly running residue.
+			startup = true
 			s.ready.Store(false)
 			log.Printf("claim run: %v", err)
 			if !schedulerWait(ctx, backoff) {

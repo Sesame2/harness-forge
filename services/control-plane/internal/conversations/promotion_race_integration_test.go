@@ -1,6 +1,6 @@
 //go:build integration
 
-package runs
+package conversations
 
 import (
 	"context"
@@ -13,24 +13,33 @@ import (
 
 	"harness-forge.local/control-plane/internal/artifacts"
 	"harness-forge.local/control-plane/internal/projects"
+	"harness-forge.local/control-plane/internal/runs"
 )
 
 func TestPromotionAndParentDeletionBothLockOrders(t *testing.T) {
 	for _, parent := range []string{"project", "conversation"} {
 		for _, first := range []string{"deletion", "promotion"} {
 			t.Run(parent+"/"+first, func(t *testing.T) {
-				pool := integrationPool(t)
-				s := NewStore(pool)
+				pool, service, projectID := conversationFixture(t)
+				s := runs.NewStore(pool)
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				run := enqueue(t, pool)
+				conversation, err := service.CreateConversation(ctx, projectID, "promotion race")
+				if err != nil {
+					t.Fatal(err)
+				}
+				message, err := service.SubmitMessage(ctx, conversation.ID, "build")
+				if err != nil {
+					t.Fatal(err)
+				}
+				run := message.Run
 				_, _ = s.ClaimNext(ctx)
 				data, err := s.LoadContext(ctx, run.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				_ = s.SetPhase(ctx, run.ID, Agent)
-				_ = s.SetPhase(ctx, run.ID, Publishing)
+				_ = s.SetPhase(ctx, run.ID, runs.Agent)
+				_ = s.SetPhase(ctx, run.ID, runs.Publishing)
 				records := []artifacts.Artifact{{ID: uuid.New(), RunID: run.ID, Title: "report", Type: "html", EntryPath: "index.html", ObjectPrefix: "report/", ManifestVersion: 1}}
 				if first == "deletion" {
 					tx, err := pool.Begin(ctx)
@@ -55,13 +64,13 @@ func TestPromotionAndParentDeletionBothLockOrders(t *testing.T) {
 					if err := tx.Commit(ctx); err != nil {
 						t.Fatal(err)
 					}
-					if err := <-result; !errors.Is(err, ErrConflict) {
+					if err := <-result; !errors.Is(err, runs.ErrConflict) {
 						t.Fatalf("promotion after deleted parent=%v", err)
 					}
 					got, _ := s.Read(ctx, run.ID)
 					var n int
 					_ = pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&n)
-					if got.Status != Running || n != 0 {
+					if got.Status != runs.Running || n != 0 {
 						t.Fatal("deleted parent promoted", got, n)
 					}
 					return
@@ -84,17 +93,26 @@ func TestPromotionAndParentDeletionBothLockOrders(t *testing.T) {
 				go func() { promoted <- s.CommitProducts(ctx, run.ID, data.ProjectID, "candidate", records) }()
 				waitDatabaseLock(t, ctx, pool, "%INSERT INTO artifacts%")
 				deleted := make(chan error, 1)
-				go func() { deleted <- projects.NewStore(pool).DeleteProject(ctx, data.ProjectID) }()
+				go func() {
+					if parent == "conversation" {
+						deleted <- service.DeleteConversation(ctx, run.ConversationID)
+						return
+					}
+					deleted <- projects.NewStore(pool).DeleteProject(ctx, data.ProjectID)
+				}()
 				waitDatabaseLock(t, ctx, pool, "%lock project%")
-				// DeleteProject's project row query has no comment; explicitly verify a
-				// blocked SELECT on projects before allowing publication to commit.
+				// Both deletion paths lock the Project before the Conversation.
 				if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock(918283)`); err != nil {
 					t.Fatal(err)
 				}
 				if err := <-promoted; err != nil {
 					t.Fatal(err)
 				}
-				if err := <-deleted; !errors.Is(err, projects.ErrConflict) {
+				wantConflict := projects.ErrConflict
+				if parent == "conversation" {
+					wantConflict = ErrConflict
+				}
+				if err := <-deleted; !errors.Is(err, wantConflict) {
 					t.Fatalf("delete bypassed unfinalized success: %v", err)
 				}
 			})
