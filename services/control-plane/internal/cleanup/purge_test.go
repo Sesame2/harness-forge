@@ -141,6 +141,42 @@ func TestPurgeDoesNotReleaseLeaseAfterRuntimeCleanupFailure(t *testing.T) {
 	}
 }
 
+func TestPurgeTreatsTypedNotFoundAsIdempotentAbsence(t *testing.T) {
+	for _, failure := range []string{"session", "execution", "release"} {
+		t.Run(failure, func(t *testing.T) {
+			projectID, runID := uuid.New(), uuid.New()
+			providerID, ref := "fake", "fake:"+runID.String()
+			session := agentexec.SessionID("session")
+			log := []string{}
+			executor := &recordingExecutor{log: &log}
+			lease := &recordingLease{log: &log, executor: executor, ref: ref}
+			switch failure {
+			case "session":
+				executor.sessionErr = &agentexec.RuntimeError{Operation: "delete session", RunID: runID, Kind: agentexec.ErrNotFound}
+			case "execution":
+				executor.executionErr = &agentexec.RuntimeError{Operation: "delete execution", RunID: runID, Kind: agentexec.ErrNotFound}
+			case "release":
+				lease.err = &sandbox.Error{Operation: "release", Provider: sandbox.Fake, RunID: runID, Kind: sandbox.ErrNotFound}
+			}
+			p := Purger{
+				catalog:         &recordingCatalog{log: &log},
+				objects:         objectstore.NewMemory(),
+				binding:         sandbox.Binding{ID: sandbox.Fake, Provider: &recordingProvider{log: &log, lease: lease}},
+				removeWorkspace: func(context.Context, uuid.UUID) error { log = append(log, "workspace"); return nil },
+			}
+			root := purgeRoot{kind: conversationRoot, id: uuid.New(), projectID: projectID, runs: []purgeRun{{id: runID, provider: &providerID, ref: &ref, candidate: &session}}}
+
+			if err := p.purgeRoot(context.Background(), root); err != nil {
+				t.Fatal(err)
+			}
+			want := "recover,session,workspace,execution,release,hard-delete"
+			if got := strings.Join(log, ","); got != want {
+				t.Fatalf("cleanup order = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
 func TestPurgeSessionOwnershipIgnoresQueuedSourceReference(t *testing.T) {
 	projectID, firstRun, queuedRun := uuid.New(), uuid.New(), uuid.New()
 	providerID, ref := "fake", "fake:"+firstRun.String()
