@@ -25,7 +25,7 @@ func TestMigrateInitialSchema(t *testing.T) {
 		t.Fatalf("second migration: %v", err)
 	}
 
-	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 1)
+	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 2)
 	assertTables(t, pool, []string{
 		"artifacts", "conversations", "input_files", "messages", "projects", "run_events", "runs",
 	})
@@ -76,7 +76,7 @@ func TestMigrateConcurrentCalls(t *testing.T) {
 			t.Errorf("concurrent migration: %v", err)
 		}
 	}
-	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 1)
+	assertCount(t, pool, "SELECT count(*) FROM schema_migrations", 2)
 }
 
 func assertCount(t *testing.T, pool *pgxpool.Pool, query string, want int) {
