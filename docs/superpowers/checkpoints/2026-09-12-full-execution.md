@@ -10,8 +10,9 @@
 
 - Task 1–6：完成（历史证据见 [Task 6 checkpoint](2026-09-12-task-6.md)）。
 - Task 7：完成；`88bda8d` 主体、`673323d` 删除幂等修复，规格/质量审查通过。
-- Task 8：实施中；Runtime/SandboxProvider/SSE。
-- Task 9–11：待实施；Artifact Gateway、Coordinator、purge。
+- Task 8：完成；`1d7ee5e`，独立规格/质量审查通过，本机全量测试与容器验收通过。
+- Task 9：实施中；Artifact 发布与隔离 Gateway。
+- Task 10–11：待实施；Coordinator、purge。
 - Task 12–16：待实施；Python execution store、Workspace、SDK Session、worker、Geo Profile/smoke。
 - Task 17–21：待实施；三栏前端、产品操作、SSE、Artifact 展示、Fake E2E。
 - Task 22：待实施；中文交付文档、本机干净检出与第二环境验收。
@@ -31,6 +32,7 @@
 - Runtime `GET /v1/executions` 返回 JSON 数组，字段 `run_id`、`lifecycle=starting|running|awaiting_finalize`，可带 nullable `candidate_sdk_session_id`；Go 忽略其他 record 字段。文中 active 指 running，不引入 status/active 别名。
 - 已 finalized 的重复 execute 返回 200 JSON `{"decision":"commit"|"abort"}`；Go 识别为 typed finalized result，绝不再次执行。`POST finalize` 使用同 decision body，成功 204。
 - Task 8 ActiveCancel 使用窄 callback seam；Task 10 Coordinator 尚不存在时，main 对 active 取消明确报 unavailable，不能伪造成功或 finalized。Task 10 必须完成实际 wiring，最终交付不得保留此中间状态。
+- Task 10 组装 ExecuteRequest 时需明确 `profile.config` 的 system prompt、工具策略和 Artifact policy 跨语言字段；当前 Task 5 Snapshot 尚无 DisallowedTools，必须在后续策略接入时补入 resolver/clone，不能让 Task 16 YAML 中的 disallowed 配置被静默丢弃。
 
 ## Task 7 验证
 
@@ -39,3 +41,11 @@
 原始 `docker compose -p hf-full-20260912 up -d --build --wait control-plane agent-runtime web` 成功，五个常驻服务 healthy；真实 HTTP 验证多会话隔离、自动/手动标题、Message 与 queued Run 一致、待执行 Run 阻止删除、重复删除幂等。额外复现并修复“会话和父 Project 删除后再 DELETE 会话仍须 204”。验证 Project `511c6a73-5c2c-4de2-8016-b92939415e84`、Conversation `27a74e03-c319-463a-aeaa-6ee5c315ef92`、Run `3cd6b238-cffe-41bf-a37e-88780942ad50`，均属隔离测试数据。
 
 非阻断兼容性备注：Go 标准 JSON decoder 会宽容接受 `Title`/`Content` 等大小写变体，较 OpenAPI 更宽；无权限或数据归属歧义，规格复议降为 Minor，未为此新增自制解码器。
+
+## Task 8 验证
+
+固定提交 `1d7ee5e`，父级独立运行全量 Go `test -race ./... -count=1`、`vet ./...` 与真实 PostgreSQL `test -tags=integration -race ./... -count=1 -timeout=120s`，全部通过。实现者记录各功能 RED→GREEN，并补充 terminal 后出现已知事件、权威 List 非法尾部、Fake Release 后 List 收敛、SSE frame 注入和 uint64 cursor 边界回归测试。
+
+独立规格及质量审查均通过，无 Critical/Important/Minor 待修问题。统一 `make test` 通过 Go、Python 55 项和 Web 2 项；Python 保留已有 Starlette/httpx deprecation warning，不影响当前结果。调用 Execute 的 Coordinator 必须完整消费事件及错误 channel 至 EOF 后才进行发布/finalize，不以收到单个 terminal frame 代替流完整性校验。
+
+以 `SANDBOX_PROVIDER=fake ANTHROPIC_API_KEY= ANTHROPIC_BASE_URL=` 显式启动原始 Compose/Dockerfile，`hf-full-20260912` 五个常驻服务全部 healthy，bucket init 正常退出 0。真实 HTTP/SSE 验收通过：Run 按会话隔离、queued 取消后终态与事件同时可读、连接存续期间实时收到取消事件、重新连接重放相同 durable ID、游标后无重复事件、重复取消不增加事件也不改变 finalized_at；取消完成后可逻辑删除父级。测试 Project `b1850b48-6276-40f5-ba73-9954435a7a7b`、Conversation `6714602d-010b-4222-9024-0b679ad8896e`、Run `e65595bc-8e49-4a35-aae6-2d8e686bc131`，无待调度测试 Run 遗留。

@@ -601,7 +601,7 @@ git commit -m "feat: add durable run state machine and queue"
 
 integration test 首行为 `//go:build integration`：强制 queued Run insert 失败时 Message 不存在；强制 Message insert 失败时 Run 不存在；成功时二者同时可见。并发 Submit/Delete race 统一按 Project row → Conversation row 加 `FOR UPDATE`：delete 先提交时 Submit 返回 deleted conflict；Submit 先提交时 delete 看到 queued Run 返回 conflict，绝不产生已删除 Conversation 的 late Message/Run。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go -C services/control-plane test ./internal/conversations ./internal/httpapi -run 'Conversation|Message' -v
@@ -623,6 +623,8 @@ git commit -m "feat: add project conversations and messages"
 ```
 
 ### Task 8：实现 Runtime 协议、SandboxProvider 与 SSE
+
+> 已完成：`1d7ee5e`，独立规格/质量审查及全量 race、真实数据库、原始 Compose 构建和 HTTP/SSE 验收通过。见[连续执行记录](../checkpoints/2026-09-12-full-execution.md)。
 
 **Files:**
 - Modify: `.env.example`
@@ -658,7 +660,7 @@ git commit -m "feat: add project conversations and messages"
 - Create: `tests/fixtures/fake-runtime/geo-report/outputs/artifact-manifest.json`
 - Create: `tests/fixtures/fake-runtime/geo-report/outputs/report/index.html`
 
-- [ ] **Step 1: 写内层 HTTP Runtime adapter 失败测试**
+- [x] **Step 1: 写内层 HTTP Runtime adapter 失败测试**
 
 使用 `httptest.Server` 验证 Execute request 包含 Profile snapshot、source Session 与绝对路径；逐行解析 typed event；确定性的非 2xx 转 typed Runtime error。覆盖 request 可能已被接受但 response header 丢失时返回 `ErrOutcomeUnknown`；重复 execute 的 `409 already_running`、`409 awaiting_finalize` 与 finalized disposition 都不被当作可重新执行。逐一覆盖 `Cancel`、幂等 `Finalize`、`ListExecutions` starting/active/awaiting-finalize 解析、`SessionExists` 的 200/404/异常、`DeleteExecution` 和 `DeleteSession`。
 
@@ -676,7 +678,7 @@ Run: `go -C services/control-plane test ./internal/agentexec -run 'Runtime|Execu
 
 Expected: FAIL，Executor/HTTP adapter 尚不存在。
 
-- [ ] **Step 2: 写 SandboxProvider contract 与 factory 失败测试**
+- [x] **Step 2: 写 SandboxProvider contract 与 factory 失败测试**
 
 contract suite 同时运行 Docker 与 Fake harness，覆盖以下不变量：
 
@@ -695,7 +697,7 @@ Run: `go -C services/control-plane test ./internal/config ./internal/sandbox -ru
 
 Expected: FAIL，Provider/Lease/factory 尚不存在。
 
-- [ ] **Step 3: 写 Run API、取消和无缝 SSE 失败测试**
+- [x] **Step 3: 写 Run API、取消和无缝 SSE 失败测试**
 
 单元/HTTP 测试覆盖 `GET /conversations/{id}/runs`；integration test 使用两个 Conversation 的交错 Run，断言只返回目标归属且严格 `created_at,id` 升序，不存在 Conversation 404。另覆盖 `GET /runs/{id}` 与 `POST /cancel`：queued 在单一 DB transaction 内设 cancelled+finalized；agent phase 先 Runtime cancel 后等待 Coordinator finalize abort；publishing 返回 409。预置 sequence 1–3，`Last-Event-ID: 1` 只返回 2–3；frame `id` 等于 durable sequence；浏览器断开不触发 cancel。
 
@@ -707,7 +709,7 @@ Run: `TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/
 
 Expected: FAIL，broker/cancellation/handlers 尚不存在。
 
-- [ ] **Step 4: 实现两个深接口**
+- [x] **Step 4: 实现两个深接口**
 
 ```go
 type Executor interface {
@@ -746,7 +748,7 @@ type Binding struct {
 
 `AcquireRequest` 只含 `RunID` 与 Go 已准备的本地 `agentexec.Paths`；`RecoverRequest` 含 `RunID`、`Ref`、本地 paths。`LeaseInfo` 只含 `RunID`、`Ref`。不要添加通用 `Exec`、shell、任意文件 API、镜像选择或 E2B-specific option；未来 adapter 的策略封装在 Provider 内。
 
-- [ ] **Step 5: 实现 Docker/Fake Provider、Run 路由和 cancellation service**
+- [x] **Step 5: 实现 Docker/Fake Provider、Run 路由和 cancellation service**
 
 Docker Provider 连接 Compose 常驻 Runtime，构造 `agentexec.HTTPExecutor`，只负责 health/路径映射/逻辑 Lease；它不按 Run 创建或销毁容器。`List` 通过 Runtime `ListExecutions` 映射为 LeaseInfo；已 acquire 但 execute 前 Control Plane 崩溃时，数据库中的 `sandbox_ref` 足以 Recover，且常驻容器不存在额外孤儿资源。
 
@@ -756,7 +758,7 @@ Fake Provider 内部持有 fixture-backed、未导出的 Executor；Executor 在
 
 `main.go` 通过 `sandbox.NewProvider(config)` 注入唯一 Binding，Run/HTTP packages 不读取 `SANDBOX_PROVIDER`。`.env.example` 使用 `SANDBOX_PROVIDER=docker`，Compose 使用 `${SANDBOX_PROVIDER:-docker}` 传入 Control Plane。在 Task 5 已使用仓库根 build context 的 Dockerfile 中追加 `tests/fixtures/fake-runtime/` 到 `/app/fixtures/fake-runtime`；不得复制整个仓库或 `.env`。Runtime contract loader 和 Fake fixture root 从 `/app` 固定目录读取。
 
-- [ ] **Step 6: 验证并提交**
+- [x] **Step 6: 验证并提交**
 
 ```bash
 go -C services/control-plane test ./internal/agentexec ./internal/sandbox ./internal/runs ./internal/httpapi -run 'Runtime|Provider|Lease|Run|Cancel|SSE' -v
