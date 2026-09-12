@@ -12,7 +12,7 @@
 - Task 7：完成；`88bda8d` 主体、`673323d` 删除幂等修复，规格/质量审查通过。
 - Task 8：完成；`1d7ee5e`，独立规格/质量审查通过，本机全量测试与容器验收通过。
 - Task 9：完成；`ef49ddb`，独立规格/质量审查、本机测试和容器联调通过。
-- Task 10：实施中；Workspace materializer、Coordinator、Scheduler 与 reconciliation。
+- Task 10：完成；主体 `13016e5`，审查修复 `dd3b046` / `ca2b9d3` / `1c76254`；独立规格与质量审查均通过，最新固定提交本机全量测试/容器联调通过。
 - Task 11：待实施；purge。
 - Task 12–16：待实施；Python execution store、Workspace、SDK Session、worker、Geo Profile/smoke。
 - Task 17–21：待实施；三栏前端、产品操作、SSE、Artifact 展示、Fake E2E。
@@ -33,8 +33,8 @@
 
 - Runtime `GET /v1/executions` 返回 JSON 数组，字段 `run_id`、`lifecycle=starting|running|awaiting_finalize`，可带 nullable `candidate_sdk_session_id`；Go 忽略其他 record 字段。文中 active 指 running，不引入 status/active 别名。
 - 已 finalized 的重复 execute 返回 200 JSON `{"decision":"commit"|"abort"}`；Go 识别为 typed finalized result，绝不再次执行。`POST finalize` 使用同 decision body，成功 204。
-- Task 8 ActiveCancel 使用窄 callback seam；Task 10 Coordinator 尚不存在时，main 对 active 取消明确报 unavailable，不能伪造成功或 finalized。Task 10 必须完成实际 wiring，最终交付不得保留此中间状态。
-- Task 10 组装 ExecuteRequest 时需明确 `profile.config` 的 system prompt、工具策略和 Artifact policy 跨语言字段；当前 Task 5 Snapshot 尚无 DisallowedTools，必须在后续策略接入时补入 resolver/clone，不能让 Task 16 YAML 中的 disallowed 配置被静默丢弃。
+- Task 8 ActiveCancel 使用窄 callback seam 的临时 unavailable 状态已在 Task 10 关闭：main 现已接入实际 Coordinator；取消确认/worker stop/收尾遵守 durable 状态机。
+- Task 10 已补入 Snapshot 的 DisallowedTools 以及 resolver/clone，ExecuteRequest 包含工具禁用策略，Task 16 YAML 接入时不再丢失该字段。
 - Task 10 已约定具体 payload：`profile.config.system_prompt`；`tools={allowed,disallowed,permission_mode}`；`artifacts={manifest_schema_version,allowed_types,max_file_bytes,max_total_bytes}`；`inputs={accepted_media_types}`。Agent 限制只放外层 `limits`。Task 13/14 按此读取策略，不另造扁平 alias；通用 Runtime request schema 的 config 仍为 object，worker policy validation 才要求这些字段。
 
 ## Task 7 验证
@@ -74,3 +74,39 @@ Task 10 接入时还需注意：当前 SubmitMessage 会在排队时记录 activ
 以同样显式 Fake/空 Claude credentials 重建原始 Compose，五服务 healthy。真实 MinIO+PostgreSQL+双端口 HTTP 验证通过：只上传 objects 时 Gateway 404/API 空列表；测试专用 metadata transaction 提交后 HTML、JS、CSS、JSON、PNG body/Content-Type 正确；CSP/nosniff/no-referrer 生效；无 cookie/CORS；原始和编码路径穿越均 400；伪造 Host/X-Forwarded-Host 不改变 configured gateway_url；默认入口 metadata-gated 302；移除 metadata 后对象再次不可见。
 
 此 Task 尚无 Coordinator，metadata transaction 是隔离验收 fixture 的定向 SQL，不代表端到端 Agent 发布已实现。验收 Project `d51271df-7605-440d-a2b5-9047d5206024`、Conversation `7b874b42-3dd0-4c48-a4ee-f45d98bc517e`、Run `43439417-5d03-41de-9f64-5614bcb2435f`、Artifact `c49eee70-a091-4836-916a-24bd1d26ec41`；测试对象及 Artifact metadata 已清理，Project/Conversation 已逻辑删除，无 queued Run 遗留。
+
+## Task 10 中间验证（尚未提交/审查完成）
+
+真实权限 RED→GREEN 已完成：原 Task 9 两镜像均 UID/GID 0，`TestComposeWorkspacePermissions` 的身份检查失败；改造后重建原始 Compose，五个常驻服务 healthy、MinIO init 与 runtime-volume-init 均退出 0，`HF_COMPOSE_PROJECT=hf-full-20260912 HF_PERMISSIONS_INTEGRATION=1 ... test -tags=integration ./internal/workspaces -run TestComposeWorkspacePermissions -v -count=1` 通过。两镜像统一 `10001:10001`；两容器共享 Workspace，只有 Runtime 挂载 SDK/execution Session 目录；inputs 写入失败，workspace/outputs/Runtime Session 目录可写。初始化仅调整约定顶层目录，不递归改变已有 inputs 只读模式。
+
+父级已在中间镜像上跑通首次真实 HTTP+PG+MinIO+Fake Provider 后端完整链路，无直接 SQL seed：CSV 上传→同 Conversation 连续两轮+另一 Conversation 首轮→读取 SSE 产品终态→校验 source/candidate 衔接、assistant Message 持久化、Artifact Gateway、finalized 与 terminal Events 顺序→逻辑删除。Project `f52855d5-a498-4ee4-9090-2e7146432204`，Conversations `75e29329-0884-4025-9ce2-b96d3bde771f` / `7eca6920-6422-49a2-8450-73a63efcbe3d`，Runs `ace3cf03-52bd-45db-9a65-94ddeae61541` / `9849b2ca-3f73-420d-8405-08ebd17cb6ca` / `023fa415-0786-44e6-86fc-e6f7c563064f`；全部 succeeded/finalized，父级已逻辑删除，无 queued 遗留。对象与 Workspace 按设计保留，供后续显式 purge；固定提交上的最终复验仍待 Task 10 完成后进行，不能用中间成功代替最终验收。
+
+Task 11 准备提示：当前所有测试容器/数据均属 `hf-full-20260912`，跑 Make maintenance 时显式 `COMPOSE_PROJECT_NAME=hf-full-20260912 SANDBOX_PROVIDER=fake`，不误用默认 Compose project。非 root purge 删除 `inputs` 前需安全恢复该受控目录的删除权限（0550 目录不能直接 RemoveAll）；不追随外部 symlink。Orphan scanner 检查任何仍存在的 Artifact metadata，不能复用隐藏逻辑删除父级的公共 Read，否则可能把待 purge 的正式 Artifact 当 orphan；Provider mismatch 必须在删除该根任何数据之前检查。
+
+Task 11 还需覆盖：migration 003 引入 Message→Run FK，与 Run→trigger Message 形成删除顺序约束，hard-delete transaction 需先清理 assistant 的 Run 引用再删 Runs/Messages；真实 MinIO scanner 测试应使用独立测试 bucket，不能仅隔离 PG schema 却扫描共享验收 bucket。当前 `MinIO.DeletePrefix` 将 ListObjects channel 直接传给 RemoveObjects；固定 minio-go v7.2.1 的 batch loop 不检查输入 `ObjectInfo.Err`，不能把 listing failure 当作清理成功，接入 purge 时须补显式错误传播回归（同时避免提前 return 遗留 producer goroutine）。
+
+## Task 10 固定提交验证（审查进行中）
+
+实现冻结于 `13016e5`。父级独立运行全量 Go `test -race ./... -count=1`、`vet ./...`、真实 PostgreSQL `test -tags=integration -race ./... -count=1 -timeout=120s`，全部通过。关键事务失败/取消/恢复用例位于 integration-tag tests，不能用未带 tag 的测试结果代替。统一 `make test` 通过 Go、Python 55 项、Web 2 项；`git diff --check` 通过。
+
+以显式 Fake/空 Claude credentials 重建原始 Compose，五个常驻服务 healthy，两个 init 正常退出 0；固定提交的真实权限测试再次通过。后端黄金链路再次通过：上传 CSV、同会话两轮与另一个会话首轮、执行时刷新 source、assistant Message 持久化、真实 Artifact 发布与 Gateway、finalized 后产品终态 Event、SSE 重放。验收 Project `5cbf38dc-4dbd-46ef-b808-3caa37fee553`，Conversations `5c3199ef-247e-4867-b506-5677b286aa78` / `247ebd43-0f88-4cf5-8327-02404942d58f`，Runs `8e148eff-b12f-4bb6-b1ed-ca15750b3a25` / `ed018b1c-979b-476c-9421-68afc9a36553` / `54f9882a-8ec4-4a7b-9e33-dd1706eb1211`；均 succeeded/finalized，父级已逻辑删除，无 queued 遗留。这里的会话衔接由 Fake 验证，不等价于真实 SDK fork 验收。
+
+实现加入独立于 Agent cancellation 的 30 秒清理 attempt 和 5 秒诊断 SyncBack 子预算；已观察到的相反 tombstone disposition 写入既有 `Run.error.cleanup_consistency`，保留原错误 code，防止后续 List 省略 tombstone 时错误释放。hard consistency 需人工检查，scheduler 不自动清除；不添加新产品状态或协议字段。
+
+规格审查 `13016e5` 发现三项待修，当前由 Task 10 实现者处理，尚未进入质量审查/合并：Claim transaction commit 已成功但 ACK 丢失时需要恢复全量协调，避免未执行的 running 永久占槽；promotion-first 的 Conversation 删除竞态测试误调用 Project 删除；补成功流 SyncBack 失败及 Manifest 失败的无部分产品提交/abort/release 回归。审查者独立 runs/workspaces/profiles race、真实 PG runs integration race 通过，但现有测试通过不免除这些缺口。
+
+三项修复已冻结于 `dd3b046`，等待规格复审与后续质量审查。仅生产改动为 claim error 后重新全量协调；通过 pgx tracer 让真实 COMMIT 成功而外层收到 error，验证第一 Run 未执行且 interrupted/finalized、第二 Run 正常成功。删除竞态移到 conversations test package，避免 imports cycle 并直接调用真实 Conversation service。父级再次全量 Go race/vet、全真实 PG integration race 通过；原始 Compose 重建、非 root 权限和后端黄金链路再次通过。最新验收 Project `2544fc7e-1895-4325-8430-540343ebcc61`，Conversations `03ed44d8-7c1b-4998-8fa9-93164e77af34` / `3f4270f6-0fa8-40c2-a4ce-faa8cdbd2770`，Runs `75a34277-ffff-4759-893c-a6fe700816a0` / `fdcc1ce1-758a-464f-a9df-5b8249314aac` / `402fbc44-dff2-4cd9-87ce-07443cbe53eb`，全部 finalized，父级已逻辑删除，无 queued 遗留。
+
+`dd3b046` 规格复审通过，三项 findings 全关闭。质量审查另外通过真实 PG overlay 复现取消 ACK 丢失：`Coordinator.Cancel` 事务已提交 cancelled 却在 error 分支直接返回，未 stop worker；`Canceller.Cancel` 重试见 cancelled 也直接返回。当前交回原实现者修复，需独立有界 context 权威回读确认后 stop，并让 cancelled/unfinalized HTTP 重试再次触发 active callback；finalized cancelled 保持幂等无副作用。修复后须质量复审、固定 SHA 最终测试，再合并主分支。overlay 复现文件仅在 `/tmp/hf-task10-quality-cancel-overlay.json`，不属于仓库实现。
+
+取消修复冻结 `ca2b9d3`；质量复审确认原问题关闭，新旧真实 PG 回归与原 overlay 均通过。父级全 Go race/vet、全 PG integration race、原始 Compose 重建、权限测试和后端黄金链路也全部通过。最新黄金链路 Project `3c2e640d-0769-40f1-91c9-96a924734556`，Runs `82b5d9f1-c0b6-40a5-985f-0f0c28acbd26` / `0f92ce49-abeb-4573-bc55-fc37a6540e9b` / `2ad979a8-dee4-4103-90ab-19720f0539f9`；父级逻辑删除、全部 finalized。
+
+当前最后一项质量修复进行中：finalized transaction 已成功但 COMMIT ACK 丢失会跳过 broker Notify，SSE 长连接可能永久漏终态（真实 PG overlay 已复现）。固定 pgx 5.4.3 的 asyncClose 不保证 error 返回时 server transaction 已结束，单次过早 Notify 也不够。已安排对 `change`/`AppendEvent`/`CancelQueued` 三处 owning transaction 在 COMMIT attempt 后做 coalesced Notify，并给 SSE 固定 5 秒低频 DB 补读兜底，仍只从数据库按游标读取、不增加协议/依赖/配置。修复后需质量复审及最终验证，Task 10 尚未合并；当前 main/origin/main 仍 `094ad49`。
+
+## Task 10 最终验收与恢复位置
+
+以上中间待修状态已全部关闭：最终实现 `1c76254` 通过独立质量复审，无 Critical/Important/Minor；之前规格复审已通过。三处 owning transaction 在 COMMIT attempt 返回后通知，caller-owned `AppendEventTx` 不越权；SSE 固定 5 秒补读保障提交后漏通知仍能送达，游标去重、断流停止 ticker。审查者独立重跑原取消/终态丢通知复现、三事务 ACKlost、取消重试和真实 PG→HTTP 静默提交，全部通过。
+
+父级在 `1c76254` 独立运行全量 Go `test -race ./... -count=1`、`vet -tags=integration ./...`、真实 PG `test -tags=integration -race ./... -count=1 -timeout=120s`，全部通过；原始 Compose 显式 Fake/空凭证构建、五服务 healthy、两个 init 退出 0；权限测试再次通过。最新完整后端验收 Project `96be1c72-9710-4375-ac2a-c2a2f38197ba`，Conversations `a8fb38dc-3e19-493b-ad7d-56ca3b37ec2a` / `33602c04-1d2f-4fe7-a115-f570961bea7a`，Runs `8a56d975-61cb-478d-8697-43d247a14219` / `865a4065-dab7-4a27-a8cc-9edbc0aaea3f` / `d23c6ffb-cbdf-4f7c-ab70-42d9d10ab48f`；全部 succeeded/finalized，父级已逻辑删除，没有 queued 遗留。
+
+下一任务直接执行 Task 11：先读本文件 Task 11 准备提示及计划，按批准范围实现 dry-run/apply purge 和 metadata orphan scanner，再进入 Python Tasks 12–16。Task 10 不再重复实现；真实 SDK fork/worker、业务前端和第二环境验收仍未完成。

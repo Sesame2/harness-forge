@@ -853,7 +853,7 @@ git commit -m "feat: publish and isolate immutable artifacts"
 - Create: `services/control-plane/migrations/00003_message_and_event_idempotency.sql`
 - Modify: `services/control-plane/cmd/harness-forge/main.go`
 
-- [ ] **Step 1: 写 Workspace 准备失败测试**
+- [x] **Step 1: 写 Workspace 准备失败测试**
 
 复用 Task 5 的 immutable Profile snapshot。Materializer 在 `/workspaces/{run_id}` 下先以 mode `0770` 建立 `inputs/workspace/outputs`，复制 template 并将 Project Input 流式落到 `inputs/{input_id}-{sanitized_name}`；materialize 全部成功后把 input files 设 `0440`、`inputs` directory 设 `0550`，只有 workspace/outputs 保持 `0770`。chmod 失败视为 preparation failure；Runtime 启动前必须已经只读。拒绝 symlink/逃逸路径。任一失败将 Run 标记 preparation failed，但保留已有 Workspace 与诊断 metadata；只有显式 `purge-deleted`/orphan cleanup 删除，测试断言失败现场仍存在。
 
@@ -872,7 +872,7 @@ go -C services/control-plane test -tags=integration ./internal/workspaces -run P
 
 Expected: PASS，两个非 root 容器共享目录权限正确。
 
-- [ ] **Step 2: 写成功两阶段收尾失败测试**
+- [x] **Step 2: 写成功两阶段收尾失败测试**
 
 Coordinator 先按 Run 读取 trigger Message、Conversation、Project 和所有未删除 Input；断言 Message 确属 Conversation、Conversation 确属 Project。它用 trigger Message `content` 作为新 prompt、Task 5 immutable Profile snapshot/digest 和绝对 Workspace paths 构造 ExecuteRequest。首轮 Conversation `active_sdk_session_id=NULL` 时 source 为 null；第二轮精确传当前 active Session，测试两种 request，并证明 candidate 未在成功 transaction 前覆盖 source pointer。
 
@@ -890,7 +890,7 @@ Run: `go -C services/control-plane test ./internal/runs -run 'Coordinator|Lease|
 
 Expected: FAIL，Coordinator/transaction choreography 尚不存在。
 
-- [ ] **Step 3: 将 reconcile 决策表写成失败测试**
+- [x] **Step 3: 将 reconcile 决策表写成失败测试**
 
 按下表逐行断言调用顺序、DB 结果及 scheduler 是否保持暂停：
 
@@ -919,7 +919,7 @@ Run: `go -C services/control-plane test ./internal/runs -run 'Scheduler|Reconcil
 
 Expected: FAIL，reconciler/scheduler 尚不存在。
 
-- [ ] **Step 4: 实现唯一 Coordinator、scheduler 和周期协调**
+- [x] **Step 4: 实现唯一 Coordinator、scheduler 和周期协调**
 
 Coordinator 是唯一组合 Inputs、Profile resolver、Workspace materializer、`sandbox.Binding`、Artifact publisher 和 Run store 的 module；它只用 validated `Binding.ID` 持久化身份，不持有裸 `agentexec.Executor`，也不导入 Docker/E2B 配置。Scheduler 只 claim/调用 Coordinator，不复制状态机。启动先 reconcile 到“无 active worker、无未释放 Lease 且无 retryable disposition”；运行中 reconciliation ticker 持续处理 unfinalized terminal Runs。下一 Run 只能在当前 Run `finalized_at` 非空后领取。
 
@@ -943,7 +943,7 @@ Active cancel 先在 transaction 写 status=cancelled、诊断原因和 `finaliz
 
 `coordinator_integration_test.go` 首行为 `//go:build integration`，在真实 PostgreSQL 中注入每个 statement 的失败点，证明 Artifact metadata、active Session 和 succeeded Run 全有或全无；并覆盖 sandbox provider 先于 Acquire、ref 在 Acquire 后分阶段幂等持久化、assistant Message/Event 幂等、promotion/delete race，以及 finalize/release ack 后 `finalized_at` 与 terminal Events 的同事务原子性。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 ```bash
 go -C services/control-plane test ./internal/profiles ./internal/workspaces ./internal/sandbox ./internal/runs -run 'Profile|Workspace|Provider|Scheduler|Coordinator|Reconcile' -v
