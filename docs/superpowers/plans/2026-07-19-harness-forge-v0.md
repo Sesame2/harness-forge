@@ -772,6 +772,8 @@ git commit -m "feat: add sandbox providers and stream run events"
 
 ### Task 9：实现 Artifact 发布与隔离 Gateway
 
+> 已完成：`ef49ddb`，独立规格/质量审查、全量 race/真实 PostgreSQL、原始 Compose 与真实 MinIO+HTTP 验收通过。见[连续执行记录](../checkpoints/2026-09-12-full-execution.md)。
+
 **Files:**
 - Modify: `.env.example`
 - Modify: `docker-compose.yaml`
@@ -791,7 +793,7 @@ git commit -m "feat: add sandbox providers and stream run events"
 - Modify: `services/control-plane/internal/httpapi/router.go`
 - Modify: `services/control-plane/cmd/harness-forge/main.go`
 
-- [ ] **Step 1: 写 Manifest、发布与 media type 失败测试**
+- [x] **Step 1: 写 Manifest、发布与 media type 失败测试**
 
 覆盖 schema 错误、重复 name、多个 primary、entry 缺失、绝对路径、`..`、逃逸 symlink、超过 Profile snapshot `max_file_bytes=10485760`/`max_total_bytes=52428800`、部分上传失败、DB commit 失败留下不可见前缀。Publisher 不读另一套环境变量，使用与 Runtime 相同 snapshot limit。每个 object 都写显式 Content-Type：`.html=text/html; charset=utf-8`、`.js=text/javascript; charset=utf-8`、`.css=text/css; charset=utf-8`、`.json=application/json`、常见图片使用标准 image type，其余为 `application/octet-stream`；不得依赖 MinIO sniff。
 
@@ -799,7 +801,7 @@ Run: `go -C services/control-plane test ./internal/artifacts -run 'Manifest|Publ
 
 Expected: FAIL，validator/publisher/lock 尚不存在。
 
-- [ ] **Step 2: 写列表 API 与 Gateway 隔离失败测试**
+- [x] **Step 2: 写列表 API 与 Gateway 隔离失败测试**
 
 `GET /runs/{run_id}/artifacts` 只返回 committed metadata 并标识 primary。Gateway 未提交 Artifact 404；已提交入口和同一 Artifact 下的 `assets/chart.js`、CSS、图片、JSON data 文件可读，并逐一断言响应 Content-Type 与上传 metadata 一致；绝对路径/`..`/编码穿越/跨 prefix 访问 400；响应含 CSP；不设置控制平面 cookie/CORS。本 Task 用 Go `httptest` 精确验证 header/body；真实浏览器在 Task 21 Playwright 场景中验证本地 ECharts 脚本在 `nosniff` 下执行。
 
@@ -807,11 +809,11 @@ Run: `go -C services/control-plane test ./internal/artifacthttp ./internal/httpa
 
 Expected: FAIL，Gateway/store/handler 尚不存在。
 
-- [ ] **Step 3: 实现 metadata-gated publisher**
+- [x] **Step 3: 实现 metadata-gated publisher**
 
 `Publisher.Prepare` 先在专用 pgx connection 取得 session advisory lock `pg_advisory_lock(hashtextextended('harness-forge:artifact-maintenance', 0))`，再分配 Artifact ID、上传最终前缀，返回含待提交 records 与幂等 `Release()` 的 `PreparedPublication`。Coordinator 必须持有该 handle 直到 metadata transaction commit/rollback 后才 release；上传失败则清 prefix 并 release。Publisher 不自行写 Artifact metadata 或把 Run 标记成功。DB 失败留下 metadata-gated、不可见的 orphan，交给 Task 11 扫描。测试断言 lock 在上传前取得、metadata 完成信号后释放，并覆盖所有 error path 不泄漏连接/锁。
 
-- [ ] **Step 4: 实现第二 listener**
+- [x] **Step 4: 实现第二 listener**
 
 ```text
 Content-Security-Policy: default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors <configured-web-origin>
@@ -823,7 +825,7 @@ Gateway route 为 `/artifacts/{artifact_id}/{relative_path...}`：先按 Artifac
 
 Config 增加必填绝对 URL `ARTIFACT_PUBLIC_ORIGIN`（本地示例 `http://localhost:8081`）；本 Task 同时把它注入 Compose Control Plane，保证后续 Task 启动服务。Artifact API 只用它加上 escaped Artifact ID/entry 构造 `gateway_url`，不相信 request Host/X-Forwarded-Host。config test 覆盖非法/带 path origin 拒绝。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 ```bash
 go -C services/control-plane test ./internal/artifacts ./internal/artifacthttp ./internal/httpapi -run 'Artifact|Gateway' -v
