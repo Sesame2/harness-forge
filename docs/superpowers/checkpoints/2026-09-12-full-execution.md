@@ -23,6 +23,14 @@
 - 默认测试不得使用真实 Claude 凭证；`make smoke-claude` 保持人工 opt-in。不会读取宿主 Claude 配置来绕过此限制。
 - 已异步询问用户是否允许添加/运行 GitHub Actions 作为第二独立 Docker 验证环境；未收到授权前不擅自运行外部 CI。此事项不阻塞本机实现。
 - Task 5 的 Docker Hub 网络问题本轮已恢复：三个基础镜像正常拉取，当前原始 Dockerfile 全栈构建与启动通过。最终 fresh-clone/第二环境验证仍须单独执行。
+- Task 7 smoke 结束后已清理其隔离容器/卷并重建 postgres/minio，避免后续 scheduler 消费遗留 queued Run。后续应用验证明确使用 Fake Provider 与空 Claude credential。
+- Task 14 前必读 [固定 SDK 版本研究](../../research/claude-agent-sdk-0.2.120.md)：实际 Session 为 `projects/<encoded-cwd>/<uuid>.jsonl`；bundled CLI 2.1.211 的跨 cwd 恢复不可直接套用新文档。研究提出保留固定 Config Dir/source UUID/fork 的受控 staging 路径，需要明确 durable ownership 与 source 保护，不擅自升级 SDK。另需异步 prompt 输入支持权限回调、`setting_sources=[]` 和精确工具集限制；真实上游语义仍只在 opt-in smoke 验证。
+
+## Task 8 中间接口约定
+
+- Runtime `GET /v1/executions` 返回 JSON 数组，字段 `run_id`、`lifecycle=starting|running|awaiting_finalize`，可带 nullable `candidate_sdk_session_id`；Go 忽略其他 record 字段。文中 active 指 running，不引入 status/active 别名。
+- 已 finalized 的重复 execute 返回 200 JSON `{"decision":"commit"|"abort"}`；Go 识别为 typed finalized result，绝不再次执行。`POST finalize` 使用同 decision body，成功 204。
+- Task 8 ActiveCancel 使用窄 callback seam；Task 10 Coordinator 尚不存在时，main 对 active 取消明确报 unavailable，不能伪造成功或 finalized。Task 10 必须完成实际 wiring，最终交付不得保留此中间状态。
 
 ## Task 7 验证
 
