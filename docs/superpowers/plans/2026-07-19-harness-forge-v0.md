@@ -529,6 +529,8 @@ git commit -m "feat: manage projects and input files"
 
 ### Task 6：实现 Run 状态机、持久队列与 Event store
 
+> 已完成：代码提交 `4199357`，规格与质量审查通过；验证及恢复入口见 [Task 6 checkpoint](../checkpoints/2026-09-12-task-6.md)。
+
 **Files:**
 - Create: `services/control-plane/internal/runs/model.go`
 - Create: `services/control-plane/internal/runs/state.go`
@@ -539,11 +541,11 @@ git commit -m "feat: manage projects and input files"
 - Create: `services/control-plane/internal/runs/events_test.go`
 - Create: `services/control-plane/migrations/00002_run_event_sequences.sql`
 
-- [ ] **Step 1: 将终态矩阵写成失败的表驱动单元测试**
+- [x] **Step 1: 将终态矩阵写成失败的表驱动单元测试**
 
 每个 case 明确 initial status/phase、是否已 Acquire Lease、Runtime disposition、Sandbox release acknowledgement、expected status 和 expected finalized；完整覆盖 queued cancel、prepare fail、Acquire 明确未创建 Lease、Acquire 结果不确定、Lease 已获取但 execute 未创建 Runtime state、agent fail、publish fail、active cancel、restart interrupt、success commit、Runtime 已 finalize 但 release 失败，以及所有非法转换。只要 Run 曾 Acquire Lease，`finalized_at` 就必须同时要求 Runtime disposition（若创建过 execution）与 Release 成功。
 
-- [ ] **Step 2: 运行纯状态测试，确认红灯后实现**
+- [x] **Step 2: 运行纯状态测试，确认红灯后实现**
 
 ```bash
 go -C services/control-plane test ./internal/runs -run 'Transition|Finalization' -v
@@ -551,7 +553,7 @@ go -C services/control-plane test ./internal/runs -run 'Transition|Finalization'
 
 实现无数据库副作用的转换函数；返回新 Run 值和 typed domain error。内部 Run model 包含 nullable `SandboxProvider`/`SandboxRef`，但 API mapper 不向浏览器暴露 ref。`finalized_at` 只能由规格矩阵允许的 Runtime acknowledgement + Sandbox release，或从未 Acquire 的路径设置。重跑并确认通过。
 
-- [ ] **Step 3: 写数据库队列/Event 失败测试并确认红灯**
+- [x] **Step 3: 写数据库队列/Event 失败测试并确认红灯**
 
 `store_integration_test.go` 首行为 `//go:build integration`。覆盖：两个连接并发 claim 时全局只领取一个 Run；存在 status 非 queued 且未 finalized 的当前 Run 时不领取；等待中的 queued Runs 不触发该阻断条件；`CreateQueuedTx` 可加入调用方事务；`BeginSandboxAcquire(run_id, provider)` 在外部调用前幂等记录 provider，`AttachSandboxRef(run_id, provider, ref)` 随后补 ref，相同值幂等、provider/ref 冲突拒绝；Event durable sequence 严格递增；重复 `(run_id,runtime_sequence)` 幂等返回既有 Event。
 
@@ -562,13 +564,13 @@ TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harnes
 
 Expected: FAIL，migration/store 尚不存在。
 
-- [ ] **Step 4: 新增 migration 并实现 store**
+- [x] **Step 4: 新增 migration 并实现 store**
 
 不得修改已执行的 `00001_initial.sql`。`00002` 增加 `runs.next_event_sequence BIGINT NOT NULL DEFAULT 1`、`run_events.runtime_sequence BIGINT NULL` 和 partial unique `(run_id,runtime_sequence) WHERE runtime_sequence IS NOT NULL`。Append Event 时锁定 Run row、分配并递增 durable sequence。
 
 每次 claim transaction 先取得固定 transaction advisory lock `pg_advisory_xact_lock(hashtextextended('harness-forge:run-claim', 0))`，再检查 `status <> 'queued' AND finalized_at IS NULL`，最后对最早 queued row 使用 `FOR UPDATE SKIP LOCKED`。并发测试让第一个 transaction 持锁暂停，证明第二个无法越过锁 claim 另一项；第一个提交 running 后，第二个醒来并因 unfinalized running Run 返回 no claim。
 
-- [ ] **Step 5: 验证并提交 Run 底座**
+- [x] **Step 5: 验证并提交 Run 底座**
 
 ```bash
 go -C services/control-plane test ./internal/runs -v
