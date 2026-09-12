@@ -113,6 +113,8 @@ def test_rejects_symlink_workspace_root(tmp_path: Path) -> None:
         ("inputs", 0o770, "inputs must not be writable"),
         ("workspace", 0o550, "workspace must be writable"),
         ("outputs", 0o550, "outputs must be writable"),
+        ("workspace", 0o600, "workspace must be writable"),
+        ("outputs", 0o600, "outputs must be writable"),
     ],
 )
 def test_enforces_go_workspace_permissions(

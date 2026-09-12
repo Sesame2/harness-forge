@@ -51,20 +51,20 @@ def validate_workspace(
         resolved[name] = actual
 
     write_bits = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
-    if resolved["inputs"].stat().st_mode & write_bits or _can_write(
-        resolved["inputs"]
+    if resolved["inputs"].stat().st_mode & write_bits or _has_access(
+        resolved["inputs"], os.W_OK
     ):
         raise ValueError("inputs must not be writable")
     for name in ("workspace", "outputs"):
-        if not resolved[name].stat().st_mode & write_bits or not _can_write(
-            resolved[name]
+        if not resolved[name].stat().st_mode & write_bits or not _has_access(
+            resolved[name], os.W_OK | os.X_OK
         ):
             raise ValueError(f"{name} must be writable")
 
     return ValidatedRunPaths(**resolved)
 
 
-def _can_write(path: Path) -> bool:
+def _has_access(path: Path, mode: int) -> bool:
     if os.access in os.supports_effective_ids:
-        return os.access(path, os.W_OK, effective_ids=True)
-    return os.access(path, os.W_OK)
+        return os.access(path, mode, effective_ids=True)
+    return os.access(path, mode)
