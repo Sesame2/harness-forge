@@ -65,8 +65,9 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      WORKSPACE_ROOT: /workspaces
-      SESSION_ROOT: /sessions
+      RUNTIME_STATE_ROOT: ${RUNTIME_STATE_ROOT:-/sessions/executions}
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/sessions/claude}
+      RUN_WORKSPACE_ROOT: ${RUN_WORKSPACE_ROOT:-/workspaces}
     volumes:
       - run-workspaces:/workspaces
       - runtime-sessions:/sessions
