@@ -63,6 +63,8 @@ class ExecutionStore:
         self.root = root
         self._records: dict[UUID, ExecutionRecord] = {}
         self._lock = asyncio.Lock()
+        # ponytail: global concurrency=1; session mutations share this reservation gate.
+        self.lifecycle_lock = asyncio.Lock()
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -91,7 +93,7 @@ class ExecutionStore:
         baseline_session_ids: list[str],
     ) -> ExecutionRecord:
         parsed = UUID(str(run_id))
-        async with self._lock:
+        async with self.lifecycle_lock, self._lock:
             self._require_initialized()
             existing = self._records.get(parsed)
             if existing is not None:

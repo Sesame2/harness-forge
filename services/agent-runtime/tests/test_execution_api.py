@@ -58,3 +58,25 @@ def test_delete_execution_rejects_invalid_run_id_without_path_access(
         response = client.delete("/v1/executions/not-a-uuid")
 
     assert response.status_code == 422
+
+
+def test_storage_failure_returns_safe_codes_and_remains_fail_closed(
+    tmp_path, monkeypatch
+):
+    store = ExecutionStore(tmp_path / "executions")
+    with TestClient(create_app(store=store)) as client:
+        run = uuid4()
+        client.portal.call(store.reserve, run, None, [])
+        client.portal.call(store.mark_awaiting_finalize, run)
+        client.portal.call(store.finalize, run, "abort")
+        monkeypatch.setattr(
+            store,
+            "_fsync_root",
+            lambda: (_ for _ in ()).throw(OSError("secret storage path")),
+        )
+        response = client.delete(f"/v1/executions/{run}")
+        assert response.status_code == 500
+        assert response.json() == {"code": "execution_operation_failed"}
+        retry = client.get("/v1/executions")
+        assert retry.status_code == 500
+        assert retry.json() == {"code": "execution_unavailable"}
