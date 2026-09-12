@@ -2,7 +2,7 @@
 
 ## 当前授权与执行方式
 
-用户最新要求：直接完整执行全部任务。此前“每完成一个任务即停下来”的节奏已取消；从 Task 7 连续执行至 Task 22，测试、双审查、checkpoint 与主分支同步继续保留。不要因为到达单个任务检查点而结束执行。
+用户最新要求（2026-09-13）：完成当前 Task 14 后，更新 checkpoint、同步并上传主分支，然后停止。此前连续执行全部任务的授权边界已被本次要求替换；本轮不开始 Task 15。Task 14 已完成测试、规格与质量审查；最新状态和恢复步骤以 [Task 14 checkpoint](2026-09-13-task-14.md) 为准，下方历史中的“下一任务”不再代表当前指令。下次用户说“继续”时，从 Task 15 恢复，不重做已通过的任务。
 
 工作树：`/Users/mei/Desktop/Project/harness-forge/.worktrees/v0-implementation`，分支 `feat/v0-implementation`。起始提交 `ac341b5`；Task 1–6 已完成。以[已批准计划](../plans/2026-07-19-harness-forge-v0.md)为范围，不提前加入 E2B adapter、通用 shell API 或新产品功能。
 
@@ -16,7 +16,8 @@
 - Task 11：完成；`bdca98b` 与测试补充 `86c744c`，规格/质量审查与真实 CLI 验收通过。
 - Task 12：完成；`5c38e84`，规格/质量审查、77 项 Python 测试和真实容器持久化验证通过。
 - Task 13：完成；`fcf6642` 与权限修复 `5e50900`，规格/质量审查及真实 Go→Runtime 校验通过。
-- Task 14–16：待实施；SDK Session、worker、Geo Profile/smoke。
+- Task 14：完成；`026dcaa`，固定 SDK Session adapter、fork/staging/finalize，184 项 Python 测试、规格与质量审查通过；额外容器多轮验收因 Docker 管理接口超时未完成。
+- Task 15–16：待实施；worker、Geo Profile/smoke。
 - Task 17–21：待实施；三栏前端、产品操作、SSE、Artifact 展示、Fake E2E。
 - Task 22：待实施；中文交付文档、本机干净检出与第二环境验收。
 
@@ -152,3 +153,7 @@ Task 11 当前实施约定：Runtime 清理任何一步失败都不提前 Releas
 最终实现 `5e50900`：父级独立 Python 116 项、Ruff、mypy 全通过；规格审查通过，质量审查发现目录写入需要 W_OK|X_OK，补两项 0600 目录红→绿回归后复审通过，无剩余问题。输入仍单独检查 W_OK；Manifest 允许 Go 同样支持的安全内部文件链接，拒绝逃逸、特殊节点和不可读子树，读取有界且计入所有输出文件大小。
 
 父级重建原始非 root Runtime，在真实 Go API 生成的 Workspace 上验证路径/权限及 Fake 输出 Manifest，通过。Project `63ca49e3-6f1f-4e6e-9842-fce95c9d662b`，Run `7051bbc7-d9ce-422b-8c0f-cd38f9fe4194`；输入文件真实命名为 `{input_id}-shared.csv`，不是裸文件名（首次父级脚本断言已据此修正，未改产品命名）。验收两个 Run 全部 finalized，Project 已逻辑删除并 purge，PG/MinIO/Workspace 清理检查通过。下一步 Task 14，先读两份已提交 SDK/fork 研究，保持固定版本、opaque staging 和明确所有权。
+
+主分支/远端已同步 `ccd0eec`，main 全量 116 项 Python 测试通过。Task 14 已派发新实现者；只安装固定 SDK、不运行真实 query。所有权创建/恢复协议须可证明精确路径归属，commit 保留 source staging，abort 不动原件/baseline，execution tombstone 删除后仍保有 staging 归属；不引入通用 GC 或跨 Provider 历史迁移。
+
+Task 14 实施约定：`SessionStore.prepare_run` 供 Task 15 父进程在 reserve/baseline 持久化后、worker 启动前调用。在私有临时 Run bucket 独占创建并同步 owner marker，之后复制 source 主文件及实际关联树；同步后发布到尚不存在的 SDK project bucket。owner marker 留在发布 bucket，不随 execution tombstone 删除。已标记 source copy 可与 canonical Session 同 UUID，未知重复拒绝；abort 仅清新增 Session 和本 Run 的精确副本。markerless 空临时目录只允许 rmdir，不递归；非空或损坏标记 fail closed。使用窄 lifecycle lock 协调 reserve/finalize/显式 Session delete，避免同一锁递归获取；无自动 GC。

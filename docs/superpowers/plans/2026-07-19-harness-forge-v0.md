@@ -1119,7 +1119,7 @@ git commit -m "feat: validate runtime workspaces and artifacts"
 - Modify: `services/agent-runtime/pyproject.toml`
 - Modify: `services/agent-runtime/uv.lock`
 
-- [ ] **Step 1: 安装并锁定 Claude Agent SDK**
+- [x] **Step 1: 安装并锁定 Claude Agent SDK**
 
 ```bash
 cd services/agent-runtime
@@ -1127,7 +1127,7 @@ uv add 'claude-agent-sdk==0.2.120'
 uv lock --check
 ```
 
-- [ ] **Step 2: 写 SDK adapter/fork 失败测试并确认红灯**
+- [x] **Step 2: 写 SDK adapter/fork 失败测试并确认红灯**
 
 覆盖首轮 `resume=None/fork_session=False`、后续 `resume=source_sdk_session_id/fork_session=True`（绝不 resume candidate）、`cwd=workspace`、Profile system prompt、allowed/disallowed tools、`permission_mode=default`、max turns/budget 和 Base URL env。Fail-closed `can_use_tool` callback 只批准 Profile allowed list，显式拒绝 disallowed 和任何未知新增 tool；测试 Read/Bash 获批、WebFetch/unknown 被拒。SDK partial `StreamEvent` 文本映射为 `assistant.delta`。Adapter 从首个 SDK init `SystemMessage` 提取 candidate Session ID，经 callback/control channel 上报，再规范化 assistant/tool/Result messages；candidate 必须不同于 source 且不属于 execute 前记录的 `baseline_session_ids`。缺 init、candidate 等于 source、candidate 已在 baseline、candidate 与 Result session 不一致、SDK error 均失败且不报告 completed。
 
@@ -1135,7 +1135,7 @@ Run: `uv run pytest tests/test_claude_adapter.py -v`
 
 Expected: FAIL，窄 adapter 未实现。
 
-- [ ] **Step 3: 实现窄 Claude adapter**
+- [x] **Step 3: 实现窄 Claude adapter**
 
 调用方只依赖 `stream_turn(request, on_candidate) -> AsyncIterator[NormalizedEvent]`。SDK 类型、System init、异常分类、tool block 映射和 ResultMessage 处理全部留在 `claude.py`；其他 module 禁止 import SDK message class。candidate callback 完成前不得产出 public agent event。
 
@@ -1143,7 +1143,7 @@ Run: `uv run pytest tests/test_claude_adapter.py -v`
 
 Expected: PASS。确认绿色后才进入 Session/finalize 下一轮红测。
 
-- [ ] **Step 4: 写 Session/finalize HTTP 失败测试并确认红灯**
+- [x] **Step 4: 写 Session/finalize HTTP 失败测试并确认红灯**
 
 测试 Runtime 私有 Session root 下的 `list_ids/exists/delete/sync_transcript`：不可信 ID、绝对路径、`..`、symlink escape 全拒绝；sync 必须 fsync transcript regular files、Session directory 和受影响父目录；缺失 Session 的 DELETE 幂等 204。覆盖 `HEAD /v1/sessions/{id}` 200/404、`DELETE /v1/sessions/{id}` 204，以及 finalize：starting/running 409，只允许 awaiting_finalize；commit 要求 candidate 已记录、存在、不同于 source、不在 `baseline_session_ids` 且 `candidate_durable_at` 非空，否则 409；abort 只能删除已验证为本 Run 新建的 candidate，绝不能删除 source/baseline Session；同 decision 幂等，矛盾 decision 409。
 
@@ -1151,7 +1151,7 @@ Run: `uv run pytest tests/test_sessions.py tests/test_session_api.py tests/test_
 
 Expected: FAIL，Session store/HTTP/finalize 尚不存在。
 
-- [ ] **Step 5: 实现 Session operations 与无泄漏 abort**
+- [x] **Step 5: 实现 Session operations 与无泄漏 abort**
 
 `sessions.py` 是 SDK Session 目录唯一 adapter，Session ID 解析后 resolve 必须仍在 Runtime-owned root。Execute reserve 在启动 worker 前持久化 `baseline_session_ids`；worker 从 init 取得 candidate 后经 control pipe 上报，父进程验证 `candidate != source` 且 `candidate not in baseline_session_ids` 后才原子写 record，随后才 relay public events。SDK Result 后，worker 调用 `sync_transcript(candidate)`，再发送 `candidate_durable` control message；父进程重新验证同一归属与 Session、把 `candidate_durable_at` 原子写 record并 ack，worker 之后才可发 `artifact.candidate/agent.completed`。
 
@@ -1163,7 +1163,7 @@ Run: `uv run pytest tests/test_sessions.py tests/test_session_api.py tests/test_
 
 Expected: PASS。确认绿色后执行本 Task 全量验证。
 
-- [ ] **Step 6: 验证并提交**
+- [x] **Step 6: 验证并提交**
 
 ```bash
 cd services/agent-runtime

@@ -4,7 +4,7 @@
 
 ## 当前进度与恢复入口
 
-Task 1–10 已完成，正在连续执行剩余 V0 任务。恢复时先阅读[连续执行 checkpoint](docs/superpowers/checkpoints/2026-09-12-full-execution.md)，不要重复实现已完成任务。
+Task 1–14 已完成，按用户要求暂停；下次从 Task 15 恢复。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-09-13-task-14.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
 
 - [中文设计规格](docs/superpowers/specs/2026-07-19-harness-forge-design.zh-CN.md)
 - [实施计划](docs/superpowers/plans/2026-07-19-harness-forge-v0.md)
