@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +50,9 @@ func (s *Memory) Delete(_ context.Context, key string) error {
 	return nil
 }
 func (s *Memory) DeletePrefix(_ context.Context, prefix string) error {
+	if !validPrefix(prefix) {
+		return fmt.Errorf("invalid object prefix %q", prefix)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key := range s.objects {
@@ -57,6 +62,29 @@ func (s *Memory) DeletePrefix(_ context.Context, prefix string) error {
 	}
 	return nil
 }
+func (s *Memory) ListPrefixes(_ context.Context, prefix string) ([]string, error) {
+	if !validPrefix(prefix) {
+		return nil, fmt.Errorf("invalid object prefix %q", prefix)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	unique := map[string]struct{}{}
+	for key := range s.objects {
+		rest, ok := strings.CutPrefix(key, prefix)
+		if !ok {
+			continue
+		}
+		if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+			unique[prefix+rest[:slash+1]] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(unique))
+	for child := range unique {
+		result = append(result, child)
+	}
+	sort.Strings(result)
+	return result, nil
+}
 func (s *Memory) Stat(_ context.Context, key string) (ObjectInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -65,4 +93,9 @@ func (s *Memory) Stat(_ context.Context, key string) (ObjectInfo, error) {
 		return ObjectInfo{}, fmt.Errorf("object %q not found", key)
 	}
 	return object.info, nil
+}
+
+func validPrefix(prefix string) bool {
+	trimmed := strings.TrimSuffix(prefix, "/")
+	return prefix != "" && strings.HasSuffix(prefix, "/") && fs.ValidPath(trimmed) && !strings.Contains(prefix, "\\")
 }

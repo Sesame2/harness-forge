@@ -402,7 +402,8 @@ func (s *fakeObjects) Delete(ctx context.Context, key string) error {
 	}
 	return nil
 }
-func (s *fakeObjects) DeletePrefix(context.Context, string) error { return nil }
+func (s *fakeObjects) DeletePrefix(context.Context, string) error             { return nil }
+func (s *fakeObjects) ListPrefixes(context.Context, string) ([]string, error) { return nil, nil }
 func (s *fakeObjects) Stat(context.Context, string) (objectstore.ObjectInfo, error) {
 	return objectstore.ObjectInfo{}, nil
 }

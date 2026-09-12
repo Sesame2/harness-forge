@@ -289,8 +289,9 @@ func (s *barrierObjects) Put(_ context.Context, key string, reader io.Reader, _ 
 func (s *barrierObjects) Open(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(nil)), nil
 }
-func (s *barrierObjects) Delete(_ context.Context, key string) error { s.deleted = key; return nil }
-func (s *barrierObjects) DeletePrefix(context.Context, string) error { return nil }
+func (s *barrierObjects) Delete(_ context.Context, key string) error             { s.deleted = key; return nil }
+func (s *barrierObjects) DeletePrefix(context.Context, string) error             { return nil }
+func (s *barrierObjects) ListPrefixes(context.Context, string) ([]string, error) { return nil, nil }
 func (s *barrierObjects) Stat(context.Context, string) (objectstore.ObjectInfo, error) {
 	return objectstore.ObjectInfo{}, nil
 }

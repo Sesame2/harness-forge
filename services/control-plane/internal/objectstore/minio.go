@@ -68,13 +68,40 @@ func (s *MinIO) Delete(ctx context.Context, key string) error {
 }
 
 func (s *MinIO) DeletePrefix(ctx context.Context, prefix string) error {
-	objects := s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true})
-	for result := range s.client.RemoveObjects(ctx, s.bucket, objects, minio.RemoveObjectsOptions{}) {
-		if result.Err != nil {
-			return fmt.Errorf("delete object %q: %w", result.ObjectName, result.Err)
+	if !validPrefix(prefix) {
+		return fmt.Errorf("invalid object prefix %q", prefix)
+	}
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	objects := s.client.ListObjects(listCtx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true})
+	for object := range objects {
+		if object.Err != nil {
+			return fmt.Errorf("list objects under %q: %w", prefix, object.Err)
+		}
+		if err := s.Delete(ctx, object.Key); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (s *MinIO) ListPrefixes(ctx context.Context, prefix string) ([]string, error) {
+	if !validPrefix(prefix) {
+		return nil, fmt.Errorf("invalid object prefix %q", prefix)
+	}
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	objects := s.client.ListObjects(listCtx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: false})
+	result := []string{}
+	for object := range objects {
+		if object.Err != nil {
+			return nil, fmt.Errorf("list prefixes under %q: %w", prefix, object.Err)
+		}
+		if object.Key != "" && strings.HasSuffix(object.Key, "/") {
+			result = append(result, object.Key)
+		}
+	}
+	return result, nil
 }
 
 func (s *MinIO) Stat(ctx context.Context, key string) (ObjectInfo, error) {

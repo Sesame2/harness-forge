@@ -11,6 +11,7 @@ type Store interface {
 	Open(context.Context, string) (io.ReadCloser, error)
 	Delete(context.Context, string) error
 	DeletePrefix(context.Context, string) error
+	ListPrefixes(context.Context, string) ([]string, error)
 	Stat(context.Context, string) (ObjectInfo, error)
 }
 
