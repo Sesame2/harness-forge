@@ -88,9 +88,10 @@ func (s *Store) CancelQueued(ctx context.Context, id uuid.UUID) (Run, error) {
 	if _, err := s.AppendEventTx(ctx, tx, Event{RunID: id, Type: "run.cancelled", Payload: []byte(`{}`), OccurredAt: run.UpdatedAt, DedupeKey: &key}); err != nil {
 		return Run{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	err = tx.Commit(ctx)
+	s.broker.Notify(id)
+	if err != nil {
 		return Run{}, fmt.Errorf("commit cancel: %w", err)
 	}
-	s.broker.Notify(id)
 	return run, nil
 }

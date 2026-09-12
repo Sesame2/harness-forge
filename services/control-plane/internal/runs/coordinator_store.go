@@ -251,9 +251,12 @@ func (s *Store) change(ctx context.Context, id uuid.UUID, fn func(pgx.Tx) error)
 	if err := fn(tx); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	err = tx.Commit(ctx)
+	// Wakeups are hints, not commit acknowledgements. The transaction may
+	// already be durable even when its acknowledgement is lost.
+	s.broker.Notify(id)
+	if err != nil {
 		return fmt.Errorf("commit run state: %w", err)
 	}
-	s.broker.Notify(id)
 	return nil
 }

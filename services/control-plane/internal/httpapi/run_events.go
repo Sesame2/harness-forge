@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"harness-forge.local/control-plane/internal/projects"
 	"harness-forge.local/control-plane/internal/runs"
@@ -70,7 +71,8 @@ func (h runHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, runs.ErrUnavailable)
 		return
 	}
-	// Subscribe before the first durable read. Coalesced notifications can only cause redundant reads, never gaps.
+	// Subscribe before the first durable read. Notifications are hints; the
+	// periodic read also covers missing hints and commits completing after one.
 	notifications, unsubscribe := h.broker.Subscribe(r.Context(), id)
 	defer unsubscribe()
 	events, err := h.store.ListEvents(r.Context(), id, after)
@@ -83,6 +85,8 @@ func (h runHandlers) stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	poll := time.NewTicker(5 * time.Second)
+	defer poll.Stop()
 	for {
 		for _, event := range events {
 			data, err := json.Marshal(event)
@@ -103,6 +107,7 @@ func (h runHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-notifications:
+		case <-poll.C:
 		}
 		events, err = h.store.ListEvents(r.Context(), id, after)
 		if err != nil {

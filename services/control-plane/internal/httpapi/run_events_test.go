@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"harness-forge.local/control-plane/internal/runs"
 )
 
@@ -113,5 +114,51 @@ func TestSSEUntrustedEventTypeCannotInjectDurableID(t *testing.T) {
 	got := readSSEIDs(t, bufio.NewScanner(response.Body), 2)
 	if !reflect.DeepEqual(got, []int64{1, 2}) {
 		t.Fatalf("injected IDs: %v", got)
+	}
+}
+
+func TestSSEPollsDurableEventsAfterEarlyOrMissingWakeupWithoutDuplicates(t *testing.T) {
+	id := uuid.New()
+	broker := runs.NewBroker()
+	store := &runMemoryStore{run: runs.Run{ID: id}, events: []runs.Event{eventFixture(id, 1)}}
+	server := httptest.NewServer(NewRouter(Dependencies{Runs: store, Broker: broker}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 14*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/v1/runs/"+id.String()+"/events/stream", nil)
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	got := readSSEIDs(t, scanner, 1)
+	// Model a COMMIT-error notification arriving while the server-side commit
+	// is still in flight: its immediate database read legitimately sees nothing.
+	earlyRead := make(chan struct{})
+	store.mu.Lock()
+	store.afterList = func() { close(earlyRead) }
+	store.mu.Unlock()
+	broker.Notify(id)
+	select {
+	case <-earlyRead:
+	case <-ctx.Done():
+		t.Fatal("early wakeup was not read")
+	}
+	store.mu.Lock()
+	store.events = append(store.events, eventFixture(id, 2))
+	store.mu.Unlock()
+	got = append(got, readSSEIDs(t, scanner, 1)...)
+	// A second silent append verifies that the periodic reread keeps its
+	// durable cursor, rather than replaying the preceding event again.
+	terminal := eventFixture(id, 3)
+	terminal.Type = "run.failed"
+	terminal.Payload = []byte(`{}`)
+	store.mu.Lock()
+	store.events = append(store.events, terminal)
+	store.mu.Unlock()
+	got = append(got, readSSEIDs(t, scanner, 1)...)
+	if !reflect.DeepEqual(got, []int64{1, 2, 3}) {
+		t.Fatalf("silent publication replayed or skipped durable IDs: %v", got)
 	}
 }
