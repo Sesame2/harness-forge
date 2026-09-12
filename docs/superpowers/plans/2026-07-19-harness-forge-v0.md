@@ -582,6 +582,8 @@ git commit -m "feat: add durable run state machine and queue"
 
 ### Task 7：实现 Conversation、Message 与原子建 Run
 
+> 已完成：`88bda8d`、`673323d`；双审查、全量 race/数据库集成、原始 Dockerfile 构建与真实 HTTP 验证通过。见[连续执行记录](../checkpoints/2026-09-12-full-execution.md)。
+
 **Files:**
 - Create: `services/control-plane/internal/conversations/model.go`
 - Create: `services/control-plane/internal/conversations/service.go`
@@ -593,7 +595,7 @@ git commit -m "feat: add durable run state machine and queue"
 - Modify: `services/control-plane/internal/httpapi/router.go`
 - Modify: `services/control-plane/cmd/harness-forge/main.go`
 
-- [ ] **Step 1: 写 module、HTTP 和真实事务失败测试**
+- [x] **Step 1: 写 module、HTTP 和真实事务失败测试**
 
 覆盖一个 Project 多个 Conversation、按 `updated_at` 排序、读取、重命名、逻辑删除、第一条 Message 自动标题、删除后拒绝新 Message。删除目标有 queued/running/unfinalized Run 时返回 409，不存在返回 404，重复逻辑删除返回 204。
 
@@ -606,11 +608,11 @@ go -C services/control-plane test ./internal/conversations ./internal/httpapi -r
 TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harness_forge?sslmode=disable' go -C services/control-plane test -tags=integration ./internal/conversations -v
 ```
 
-- [ ] **Step 3: 实现 Conversation module 和原子提交**
+- [x] **Step 3: 实现 Conversation module 和原子提交**
 
 `SubmitMessage` 开启一个 pgx transaction，按固定顺序锁 Project 和 Conversation row 并确认二者 `deleted_at IS NULL`，写 user Message，再调用 Task 6 的 `runs.Store.CreateQueuedTx`，提交后返回 `{message,run}`。Project/Conversation delete 使用同一锁顺序。标题算法只截取规范化后第一条 Message 的前 40 个 Unicode code point，不调用模型。不得在 Conversation package 重写 Runs SQL。
 
-- [ ] **Step 4: 注册全部 Conversation/Message 路由并提交**
+- [x] **Step 4: 注册全部 Conversation/Message 路由并提交**
 
 ```bash
 go -C services/control-plane test ./internal/conversations ./internal/httpapi -v
