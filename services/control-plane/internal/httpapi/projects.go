@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"harness-forge.local/control-plane/internal/conversations"
 	"harness-forge.local/control-plane/internal/projects"
 
 	"github.com/go-chi/chi/v5"
@@ -211,11 +212,11 @@ func writeJSON(response http.ResponseWriter, status int, value any) {
 func writeError(response http.ResponseWriter, err error) {
 	status, code := http.StatusInternalServerError, "internal_error"
 	switch {
-	case errors.Is(err, projects.ErrInvalid):
+	case errors.Is(err, projects.ErrInvalid), errors.Is(err, conversations.ErrInvalid):
 		status, code = http.StatusBadRequest, "bad_request"
-	case errors.Is(err, projects.ErrNotFound):
+	case errors.Is(err, projects.ErrNotFound), errors.Is(err, conversations.ErrNotFound):
 		status, code = http.StatusNotFound, "not_found"
-	case errors.Is(err, projects.ErrConflict):
+	case errors.Is(err, projects.ErrConflict), errors.Is(err, conversations.ErrConflict):
 		status, code = http.StatusConflict, "conflict"
 	case errors.Is(err, projects.ErrPayloadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "payload_too_large"

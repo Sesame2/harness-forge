@@ -7,11 +7,13 @@ import (
 	"os"
 
 	"harness-forge.local/control-plane/internal/config"
+	"harness-forge.local/control-plane/internal/conversations"
 	"harness-forge.local/control-plane/internal/httpapi"
 	"harness-forge.local/control-plane/internal/objectstore"
 	"harness-forge.local/control-plane/internal/postgres"
 	"harness-forge.local/control-plane/internal/profiles"
 	"harness-forge.local/control-plane/internal/projects"
+	"harness-forge.local/control-plane/internal/runs"
 )
 
 func main() {
@@ -36,9 +38,10 @@ func main() {
 		log.Fatal(err)
 	}
 	projectService := projects.NewService(projects.NewStore(pool), profileResolver, objects)
+	conversationService := conversations.NewService(conversations.NewStore(pool), runs.NewStore(pool))
 
 	log.Printf("control plane listening on %s", applicationConfig.HTTPAddr)
-	err = http.ListenAndServe(applicationConfig.HTTPAddr, httpapi.NewRouter(projectService))
+	err = http.ListenAndServe(applicationConfig.HTTPAddr, httpapi.NewRouter(httpapi.Dependencies{Projects: projectService, Conversations: conversationService}))
 	if err != nil {
 		log.Fatal(err)
 	}

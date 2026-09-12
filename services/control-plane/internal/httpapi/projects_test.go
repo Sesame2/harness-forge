@@ -24,7 +24,7 @@ func TestProjectHTTPRoutesAndStatuses(t *testing.T) {
 	project := projects.Project{ID: id, Name: "Map", ProfileID: "geo-analysis", ProfileVersion: "1", AcceptedInputMediaTypes: []string{"text/csv"}, CreatedAt: now, UpdatedAt: now}
 	input := projects.InputFile{ID: inputID, ProjectID: id, DisplayName: "points.csv", MediaType: "text/csv", SizeBytes: 3, SHA256Digest: strings.Repeat("a", 64), CreatedAt: now}
 	service := &fakeProjectService{project: project, projects: []projects.Project{project}, input: input, inputs: []projects.InputFile{input}}
-	router := NewRouter(service)
+	router := NewRouter(Dependencies{Projects: service})
 
 	tests := []struct {
 		name, method, path string
@@ -97,13 +97,13 @@ func TestProjectHTTPErrorsMatchComponents(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+id.String()+"/inputs", strings.NewReader("not multipart"))
 			req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
 			response := httptest.NewRecorder()
-			NewRouter(service).ServeHTTP(response, req)
+			NewRouter(Dependencies{Projects: service}).ServeHTTP(response, req)
 			// Bad multipart is itself 400; use create for service-level mappings other than 413.
 			if tt.want != http.StatusBadRequest {
 				req = httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"Map","profile_id":"geo-analysis"}`))
 				req.Header.Set("Content-Type", "application/json")
 				response = httptest.NewRecorder()
-				NewRouter(service).ServeHTTP(response, req)
+				NewRouter(Dependencies{Projects: service}).ServeHTTP(response, req)
 			}
 			if response.Code != tt.want {
 				t.Fatalf("status = %d, want %d; body=%s", response.Code, tt.want, response.Body.String())
@@ -130,7 +130,7 @@ func TestProjectHTTPRejectsInvalidUUIDAndJSON(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":`)),
 	} {
 		response := httptest.NewRecorder()
-		NewRouter(&fakeProjectService{}).ServeHTTP(response, request)
+		NewRouter(Dependencies{Projects: &fakeProjectService{}}).ServeHTTP(response, request)
 		if response.Code != http.StatusBadRequest {
 			t.Errorf("%s %s status = %d", request.Method, request.URL.Path, response.Code)
 		}
@@ -153,7 +153,7 @@ func TestInputFileHTTPRejectsNonUniqueFilePartWithoutWrites(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID.String()+"/inputs", body)
 			request.Header.Set("Content-Type", contentType)
 			response := httptest.NewRecorder()
-			NewRouter(service).ServeHTTP(response, request)
+			NewRouter(Dependencies{Projects: service}).ServeHTTP(response, request)
 
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())

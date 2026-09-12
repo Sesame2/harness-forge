@@ -6,11 +6,20 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func NewRouter(services ...projectService) http.Handler {
+type Dependencies struct {
+	Projects      projectService
+	Conversations conversationService
+}
+
+func NewRouter(dependencies ...Dependencies) http.Handler {
 	router := chi.NewRouter()
 	router.Get("/health", health)
-	if len(services) > 0 && services[0] != nil {
-		handlers := projectHandlers{service: services[0]}
+	var services Dependencies
+	if len(dependencies) > 0 {
+		services = dependencies[0]
+	}
+	if services.Projects != nil {
+		handlers := projectHandlers{service: services.Projects}
 		router.Route("/api/v1/projects", func(router chi.Router) {
 			router.Get("/", handlers.list)
 			router.Post("/", handlers.create)
@@ -21,6 +30,18 @@ func NewRouter(services ...projectService) http.Handler {
 				router.Get("/inputs", handlers.listInputs)
 				router.Post("/inputs", handlers.uploadInput)
 			})
+		})
+	}
+	if services.Conversations != nil {
+		handlers := conversationHandlers{service: services.Conversations}
+		router.Get("/api/v1/projects/{project_id}/conversations", handlers.list)
+		router.Post("/api/v1/projects/{project_id}/conversations", handlers.create)
+		router.Route("/api/v1/conversations/{conversation_id}", func(router chi.Router) {
+			router.Get("/", handlers.read)
+			router.Patch("/", handlers.rename)
+			router.Delete("/", handlers.delete)
+			router.Get("/messages", handlers.listMessages)
+			router.Post("/messages", handlers.submitMessage)
 		})
 	}
 	return router
