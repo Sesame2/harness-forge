@@ -15,7 +15,8 @@
 - Task 10：完成；主体 `13016e5`，审查修复 `dd3b046` / `ca2b9d3` / `1c76254`；独立规格与质量审查均通过，最新固定提交本机全量测试/容器联调通过。
 - Task 11：完成；`bdca98b` 与测试补充 `86c744c`，规格/质量审查与真实 CLI 验收通过。
 - Task 12：完成；`5c38e84`，规格/质量审查、77 项 Python 测试和真实容器持久化验证通过。
-- Task 13–16：待实施；Workspace、SDK Session、worker、Geo Profile/smoke。
+- Task 13：完成；`fcf6642` 与权限修复 `5e50900`，规格/质量审查及真实 Go→Runtime 校验通过。
+- Task 14–16：待实施；SDK Session、worker、Geo Profile/smoke。
 - Task 17–21：待实施；三栏前端、产品操作、SSE、Artifact 展示、Fake E2E。
 - Task 22：待实施；中文交付文档、本机干净检出与第二环境验收。
 
@@ -143,3 +144,11 @@ Task 11 当前实施约定：Runtime 清理任何一步失败都不提前 Releas
 原始 Compose 显式 Fake/空 Claude 凭证重建 Runtime，UID/GID 10001:10001，服务 healthy。父级在该持久卷独立测试目录 reserve，重启容器后重新实例化 Store 读到 starting，再 awaiting_finalize→abort→删除两次；真实 HTTP GET executions 返回空数组、缺失 DELETE 返回 204、health 正常。测试目录已清理，默认 execution root 未注入记录。此验证不代表 Task 15 的 worker 崩溃恢复已交付。
 
 质量审查通过，无 Critical/Important/Minor；Task 12 完成。接下来直接执行 Task 13，复用现有 Pydantic Manifest 模型，Runtime 只校验 Go 已准备的 Workspace，不重复创建、下载或复制。
+
+主分支与远端已同步 `a630837`，main 的 77 项 Python 测试通过后 push 成功。Task 13 实施中，另补共享 `ArtifactManifest` 对 bool schema_version 的严格拒绝，避免 Pydantic Literal 将 true 等同于 1。当前正在检查不可读目录、有效权限和 Manifest 有界读取，尚未冻结/审查。
+
+## Task 13 最终验证
+
+最终实现 `5e50900`：父级独立 Python 116 项、Ruff、mypy 全通过；规格审查通过，质量审查发现目录写入需要 W_OK|X_OK，补两项 0600 目录红→绿回归后复审通过，无剩余问题。输入仍单独检查 W_OK；Manifest 允许 Go 同样支持的安全内部文件链接，拒绝逃逸、特殊节点和不可读子树，读取有界且计入所有输出文件大小。
+
+父级重建原始非 root Runtime，在真实 Go API 生成的 Workspace 上验证路径/权限及 Fake 输出 Manifest，通过。Project `63ca49e3-6f1f-4e6e-9842-fce95c9d662b`，Run `7051bbc7-d9ce-422b-8c0f-cd38f9fe4194`；输入文件真实命名为 `{input_id}-shared.csv`，不是裸文件名（首次父级脚本断言已据此修正，未改产品命名）。验收两个 Run 全部 finalized，Project 已逻辑删除并 purge，PG/MinIO/Workspace 清理检查通过。下一步 Task 14，先读两份已提交 SDK/fork 研究，保持固定版本、opaque staging 和明确所有权。

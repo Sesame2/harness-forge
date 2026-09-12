@@ -1077,25 +1077,25 @@ git commit -m "feat: persist runtime execution dispositions"
 - Create: `services/agent-runtime/tests/test_workspaces.py`
 - Create: `services/agent-runtime/tests/test_artifacts.py`
 
-- [ ] **Step 1: 写路径和 Manifest 失败测试**
+- [x] **Step 1: 写路径和 Manifest 失败测试**
 
 使用 `tmp_path` 预先创建 Go materialized 的 `inputs/workspace/outputs`，对 request `run_id` 断言三条 resolve 后必须精确等于 `${RUN_WORKSPACE_ROOT}/{run_id}/inputs|workspace|outputs`，拒绝同 root 下另一 Run 的目录；覆盖 inputs 不可写、workspace/outputs 可写、缺目录、`..` 和 symlink root。Manifest 覆盖空 outputs 且无 Manifest返回零 Artifact（合法）、有 publishable file 却无 Manifest、错误 schema version、Profile snapshot 不允许的 type、缺失 entry、逃逸 symlink、重复 name、多个 primary、单文件/总大小上限。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd services/agent-runtime && uv run pytest tests/test_workspaces.py tests/test_artifacts.py -v`
 
 Expected: FAIL，Workspace/Manifest validators 尚不存在。
 
-- [ ] **Step 3: 实现 Workspace preparation**
+- [x] **Step 3: 实现 Workspace preparation**
 
 只接受 Go 传入且位于配置 Run root 下的既有绝对路径；用 `Path.resolve()` 验证归属并检查权限。不创建目录、不复制 Profile template、不下载对象，也不在失败时删除 Workspace。Validator 返回 immutable paths value object。
 
-- [ ] **Step 4: 实现 Manifest validator**
+- [x] **Step 4: 实现 Manifest validator**
 
 先用已提交 V1 JSON Schema/Pydantic 验证结构，再逐 entry `lstat/resolve`；将 Manifest version/Artifact type 与 ExecuteRequest 的 Profile snapshot policy 交叉验证，并直接使用 snapshot 的 `max_file_bytes=10485760`、`max_total_bytes=52428800`；拒绝目录、逃逸 symlink 和超限输出；返回 typed candidate summary，不上传文件。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 ```bash
 cd services/agent-runtime
