@@ -973,7 +973,7 @@ git commit -m "feat: coordinate durable agent runs"
 - Modify: `services/control-plane/internal/httpapi/projects.go`
 - Modify: `services/control-plane/internal/httpapi/conversations.go`
 
-- [ ] **Step 1: 写清理顺序与幂等失败测试**
+- [x] **Step 1: 写清理顺序与幂等失败测试**
 
 断言顺序：MinIO prefix → 通过记录的 Provider/ref Recover（若仍需 Runtime 清理）→ SDK Session → Workspace → execution tombstone → 幂等 Release → PostgreSQL hard delete。外部资源“不存在”为成功；中途失败后重跑不得删除共享 Input File。再次覆盖 Project/Conversation 有 queued/running/unfinalized Run 时 HTTP 删除 409。Purge 接收 composition root 注入的同一 `sandbox.Binding`，不自行拼 Runtime URL，也不读取 Docker/E2B-specific 配置；任一待清理 Run 的 recorded provider 与 `Binding.ID` 不同则 fail closed，且不删除任何该根数据。
 
@@ -987,7 +987,7 @@ TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harnes
 
 Expected: FAIL，cleanup scanner/command/Object Store listing 尚不存在。
 
-- [ ] **Step 2: 实现 purge command**
+- [x] **Step 2: 实现 purge command**
 
 扩展 Object Store seam 增加受 prefix 约束的 `ListPrefixes`，先安全扫描 metadata orphan，再处理已 `deleted_at` 且无 queued/running/unfinalized Run 的根；默认 dry-run，`--apply` 执行。输出结构化 summary，任一清理失败时非零退出并保留 DB 根记录。
 
@@ -996,20 +996,24 @@ Makefile 必须实现规格入口：
 ```make
 purge-deleted:
 	docker compose -f docker-compose.yaml build control-plane
-	docker compose -f docker-compose.yaml up -d --wait postgres minio minio-init agent-runtime
+	docker compose -f docker-compose.yaml up -d --wait postgres minio agent-runtime
+	docker compose -f docker-compose.yaml run --rm --no-deps minio-init
 	docker compose -f docker-compose.yaml run --rm --no-deps control-plane /usr/local/bin/purge-deleted --apply
 
 purge-deleted-dry-run:
 	docker compose -f docker-compose.yaml build control-plane
-	docker compose -f docker-compose.yaml up -d --wait postgres minio minio-init agent-runtime
+	docker compose -f docker-compose.yaml up -d --wait postgres minio agent-runtime
+	docker compose -f docker-compose.yaml run --rm --no-deps minio-init
 	docker compose -f docker-compose.yaml run --rm --no-deps control-plane /usr/local/bin/purge-deleted --dry-run
 ```
 
 若启动提示 Provider mismatch，必须在仍可访问旧 Provider 时显式运行，例如 `SANDBOX_PROVIDER=docker make purge-deleted`，确认旧数据清完后才改部署默认值。Make/Compose 必须保留 shell override，不得在 yaml 中写死 Provider。
 
+`--wait` 只针对常驻服务；`runtime-volume-init` 由 Runtime dependency 启动，bucket 初始化则显式 one-shot `run` 并等待其退出码。这样既不把正常退出的 init 当作 unhealthy，也不为维护额外启动 HTTP server/Scheduler 或给 Runtime 添加 MinIO 业务依赖。
+
 Control Plane Dockerfile 同时构建 `/usr/local/bin/harness-forge` 与 `/usr/local/bin/purge-deleted`。Purge CLI 与 server 共用 Task 4 migration runner和 Task 8 Provider factory：连接数据库后先取得 migration lock 并升级 schema，再查询待清理根，因此可从空数据库启动。Compose 的 one-shot `run` 继承 Control Plane 的内部 PostgreSQL/MinIO/Sandbox environment 和 `run-workspaces:/workspaces` volume；`minio-init` 确保 bucket 存在，因此命令能从干净环境按规格清 Workspace、Session 和 tombstone。不得在宿主机直接 `go run` maintenance command。
 
-- [ ] **Step 3: 验证并提交**
+- [x] **Step 3: 验证并提交**
 
 ```bash
 go -C services/control-plane test ./internal/cleanup ./internal/httpapi -run 'Delete|Purge' -v

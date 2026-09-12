@@ -13,7 +13,7 @@
 - Task 8：完成；`1d7ee5e`，独立规格/质量审查通过，本机全量测试与容器验收通过。
 - Task 9：完成；`ef49ddb`，独立规格/质量审查、本机测试和容器联调通过。
 - Task 10：完成；主体 `13016e5`，审查修复 `dd3b046` / `ca2b9d3` / `1c76254`；独立规格与质量审查均通过，最新固定提交本机全量测试/容器联调通过。
-- Task 11：待实施；purge。
+- Task 11：完成；`bdca98b` 与测试补充 `86c744c`，规格/质量审查与真实 CLI 验收通过。
 - Task 12–16：待实施；Python execution store、Workspace、SDK Session、worker、Geo Profile/smoke。
 - Task 17–21：待实施；三栏前端、产品操作、SSE、Artifact 展示、Fake E2E。
 - Task 22：待实施；中文交付文档、本机干净检出与第二环境验收。
@@ -110,3 +110,25 @@ Task 11 还需覆盖：migration 003 引入 Message→Run FK，与 Run→trigger
 父级在 `1c76254` 独立运行全量 Go `test -race ./... -count=1`、`vet -tags=integration ./...`、真实 PG `test -tags=integration -race ./... -count=1 -timeout=120s`，全部通过；原始 Compose 显式 Fake/空凭证构建、五服务 healthy、两个 init 退出 0；权限测试再次通过。最新完整后端验收 Project `96be1c72-9710-4375-ac2a-c2a2f38197ba`，Conversations `a8fb38dc-3e19-493b-ad7d-56ca3b37ec2a` / `33602c04-1d2f-4fe7-a115-f570961bea7a`，Runs `8a56d975-61cb-478d-8697-43d247a14219` / `865a4065-dab7-4a27-a8cc-9edbc0aaea3f` / `d23c6ffb-cbdf-4f7c-ab70-42d9d10ab48f`；全部 succeeded/finalized，父级已逻辑删除，没有 queued 遗留。
 
 下一任务直接执行 Task 11：先读本文件 Task 11 准备提示及计划，按批准范围实现 dry-run/apply purge 和 metadata orphan scanner，再进入 Python Tasks 12–16。Task 10 不再重复实现；真实 SDK fork/worker、业务前端和第二环境验收仍未完成。
+
+主分支同步已实际完成：`main` 与 `origin/main` 均为 `4054d46`（2026-09-13），main 上全量 Go 测试通过后 push 成功。Task 11 新实现者已从同一提交开始；父级持有本 checkpoint 文档更新，实现者只提交 Task 11 代码。
+
+## Task 11 验收准备
+
+父级已通过现有真实 API 在隔离栈创建 Project `db549db7-68bc-498f-b1c2-9102152b55a4`，共享 Input `9f472889-7e63-452c-8e82-7bcf413f4c1c`，两个已成功收尾的 Run `f8879632-b86b-439e-abf5-5718ab7484e6` / `5d538ae2-b50b-474b-bb8e-76345c13c58d`。Conversation `863d2460-b05e-4836-a1dd-4f9e2eee6083` 已逻辑删除，`3cc7af5c-82c8-4e5f-8917-76514649f833` 保留活跃，用于真实 CLI 验证“清一个会话不删共享输入/另一个会话制品”。初始 PG/MinIO/Workspace 与 Gateway 状态检查通过，无 queued/unfinalized。
+
+本机临时验收脚本 `/Users/mei/Documents/Codex/2026-07-19/new-chat/work/full-execution/task11-smoke.py`，fixture JSON 同目录 `task11-fixture.json`。CLI 完成后先 dry-run+脚本 `before`，再 apply+`conversation`，随后脚本 `delete-project`、apply+`project`，最后重复 apply 验证幂等。脚本第二参数传 fixture JSON 内容。只使用 `hf-full-20260912`，不操作默认项目数据；仓库内自动化回归仍由 Task 11 实现者交付。
+
+同一验收 Project 另有人工上传、无 Artifact metadata 的真实 MinIO orphan `2aa4eabd-d5d2-47ef-8ee6-6de5258fee1d/index.html`（完整 key 见 fixture JSON），当前对象 200、Gateway 404。脚本也验证 dry-run 保留此对象、apply 删除 orphan，同时另一 Conversation 的正式 Artifact 仍可读。
+
+Task 11 当前实施约定：Runtime 清理任何一步失败都不提前 Release；queued-cancel 的 source Session 只是引用，不是该未 Acquire Run 的资源，按有 ref 的 Run candidate 归属清理。Provider mismatch preflight 必须早于 orphan scanner 删除。Make 使用常驻 `up --wait postgres minio agent-runtime`，再显式 `run --rm --no-deps minio-init`，最后 one-shot CLI；不额外启动 HTTP/Scheduler，也不增加 Runtime→MinIO 依赖。此 one-shot 调整已同步计划，等待父级真实 Compose 验证。
+
+## Task 11 固定提交验收（2026-09-13）
+
+实现 `bdca98b`：父级全量 Go race、integration-tag vet、真实 PostgreSQL/隔离 MinIO bucket 全量 integration race 均通过。原始 Dockerfile 成功构建两个 binary；真实 Make dry-run 保留全部 fixture，apply 清理 8 个逻辑删除根及 1 个 orphan，重复 apply 为 0。会话级清理后另一个会话、其制品和共享 CSV 均保留（PG/MinIO/Gateway/Workspace 独立检查通过）；随后逻辑删除整个 Project 并执行 apply。
+
+使用同一 Compose one-shot 镜像，在新建空数据库 `hf_task11_empty_20260913` 与专属空 bucket 上直接运行 CLI apply，退出 0、候选根为 0；查询确认自动应用 3 项 migration、projects 可读且为空。没有在宿主机运行维护命令，也没有启动额外 HTTP/Scheduler。空验收数据库随后清理，bucket 留在本次隔离栈内等待统一销毁。
+
+规格审查仅发现 typed NotFound 幂等分支缺少 Purger 层测试，已交回原实现者补充；生产逻辑未发现偏差。仍待规格复审和质量审查，不能将 Task 11 勾选完成。后续按 Task 12 开始 execution store，继续全部已批准任务。
+
+以上待审状态已关闭：`86c744c` 补充 typed NotFound 表驱动回归，规格复审和独立质量审查均通过，无 Critical/Important/Minor。父级该提交 cleanup race 与统一 `make test` 通过（Go、Python 55、Web 2）。整 Project 清理后的 PG/MinIO/Workspace/Gateway 检查通过，重复 apply 为 0。下一任务为 Task 12；本机真实 Claude 验收仍未运行。
