@@ -87,6 +87,18 @@ func (s *Store) RenameConversation(ctx context.Context, id uuid.UUID, title stri
 }
 
 func (s *Store) DeleteConversation(ctx context.Context, id uuid.UUID) error {
+	// A completed delete stays idempotent even after its parent is deleted.
+	var deleted bool
+	err := s.pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM conversations WHERE id=$1`, id).Scan(&deleted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if deleted {
+		return nil
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
