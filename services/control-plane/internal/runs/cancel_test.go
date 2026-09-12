@@ -72,6 +72,24 @@ func TestCancelPublishingAndUnavailableAndNotFound(t *testing.T) {
 	}
 }
 
+func TestCancelRetryDelegatesOnlyUnfinalizedCancellation(t *testing.T) {
+	store := &cancelMemoryStore{run: Run{ID: uuid.New(), Status: Cancelled}}
+	calls := 0
+	canceller := NewCanceller(store, func(_ context.Context, run Run) (Run, error) { calls++; return run, nil })
+	if _, err := canceller.Cancel(context.Background(), store.run.ID); err != nil || calls != 1 {
+		t.Fatalf("unfinalized retry did not stop worker: calls=%d err=%v", calls, err)
+	}
+	now := time.Now()
+	store.run.FinalizedAt = &now
+	if _, err := canceller.Cancel(context.Background(), store.run.ID); err != nil || calls != 1 {
+		t.Fatalf("finalized retry had side effects: calls=%d err=%v", calls, err)
+	}
+	store.run.FinalizedAt = nil
+	if _, err := NewCanceller(store, nil).Cancel(context.Background(), store.run.ID); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("unfinalized retry without coordinator: %v", err)
+	}
+}
+
 func TestRunBrokerCoalescesAndCleansSubscribers(t *testing.T) {
 	broker := NewBroker()
 	ctx, cancel := context.WithCancel(context.Background())

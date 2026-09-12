@@ -259,7 +259,15 @@ func cleanupContext() (context.Context, context.CancelFunc) {
 func (c *Coordinator) Cancel(ctx context.Context, run Run) (Run, error) {
 	result, err := c.store.RecordFailure(ctx, run.ID, Cancelled, failureDetail("user_cancelled"))
 	if err != nil {
-		return Run{}, err
+		// A failed acknowledgement is not evidence that COMMIT failed. Confirm
+		// independently of the browser request before stopping the worker.
+		confirmationCtx, done := cleanupContext()
+		defer done()
+		confirmed, readErr := c.store.Read(confirmationCtx, run.ID)
+		if readErr != nil || confirmed.Status != Cancelled {
+			return Run{}, errors.Join(err, readErr)
+		}
+		result = confirmed
 	}
 	if result.Status != Cancelled {
 		return Run{}, ErrConflict

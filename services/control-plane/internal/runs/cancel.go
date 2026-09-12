@@ -42,7 +42,13 @@ func (c *Canceller) Cancel(ctx context.Context, id uuid.UUID) (Run, error) {
 		}
 	}
 	if run.Status == Cancelled {
-		return run, nil
+		if run.FinalizedAt != nil {
+			return run, nil
+		}
+		if c.active == nil {
+			return Run{}, ErrUnavailable
+		}
+		return c.active(ctx, run)
 	}
 	if run.Status != Running || run.Phase == nil || *run.Phase == Publishing || run.FinalizedAt != nil {
 		return Run{}, ErrConflict

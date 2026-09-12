@@ -105,6 +105,33 @@ func TestRunErrorEnvelopes(t *testing.T) {
 	}
 }
 
+type retryCancelStore struct{ *runMemoryStore }
+
+func (retryCancelStore) CancelQueued(context.Context, uuid.UUID) (runs.Run, error) {
+	panic("cancelled retry must not use queued cancellation")
+}
+
+func TestHTTPCancelRetryStopsPersistedUnfinalizedCancellation(t *testing.T) {
+	store := retryCancelStore{&runMemoryStore{run: runs.Run{ID: uuid.New(), Status: runs.Cancelled}}}
+	executionCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	calls := 0
+	canceller := runs.NewCanceller(store, func(_ context.Context, run runs.Run) (runs.Run, error) { calls++; stop(); return run, nil })
+	router := NewRouter(Dependencies{Runs: store, Canceller: canceller})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("POST", "/api/v1/runs/"+store.run.ID.String()+"/cancel", nil))
+	if response.Code != 202 || calls != 1 || executionCtx.Err() == nil {
+		t.Fatalf("HTTP retry failed to stop worker: status=%d calls=%d stopped=%v", response.Code, calls, executionCtx.Err())
+	}
+	now := time.Now()
+	store.run.FinalizedAt = &now
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("POST", "/api/v1/runs/"+store.run.ID.String()+"/cancel", nil))
+	if response.Code != 202 || calls != 1 {
+		t.Fatalf("finalized HTTP retry had side effects: status=%d calls=%d", response.Code, calls)
+	}
+}
+
 func eventFixture(id uuid.UUID, sequence int64) runs.Event {
 	return runs.Event{RunID: id, Sequence: sequence, Type: "assistant.delta", Payload: json.RawMessage(`{"text":"hello"}`), OccurredAt: time.Now().UTC()}
 }
