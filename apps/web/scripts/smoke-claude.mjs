@@ -18,7 +18,7 @@ export async function runSmoke({
     const response = await fetch(new URL(path, baseURL), {
       ...init, signal: AbortSignal.timeout(Math.max(1, Math.min(15000, deadline - now()))),
     })
-    if (!response.ok) throw new Error(`${init.method ?? 'GET'} ${path}: HTTP ${response.status}`)
+    if (!response.ok) throw Object.assign(new Error(`${init.method ?? 'GET'} ${path}: HTTP ${response.status}`), { status: response.status })
     return response.status === 204 ? null : response.json()
   }
   const post = (path, body) => request(path, {
@@ -89,8 +89,18 @@ export async function runSmoke({
     throw error
   } finally {
     if (browser) await cleanup(() => browser.close())
+    if (run && !terminal(run)) {
+      await cleanup(async () => {
+        try { await post(`/api/v1/runs/${run.id}/cancel`, {}) }
+        catch (error) {
+          if (error.status !== 409) throw error
+          // Completion can win between our snapshot and the cancellation request.
+          run = await request(`/api/v1/runs/${run.id}`)
+          if (!terminal(run)) throw error
+        }
+      })
+    }
     if (run && (!terminal(run) || !run.finalized_at)) {
-      await cleanup(() => post(`/api/v1/runs/${run.id}/cancel`, {}))
       await cleanup(async () => {
         const deadline = now() + 30000
         while (now() < deadline) {

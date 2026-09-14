@@ -18,15 +18,20 @@ const events = [
 function fixture(options = {}) {
   let time = 0
   let cancelled = false
+  let wonByCompletion = false
   const calls = [], logs = [], browserEvents = {}
-  const run = () => ({ id: 'run-1', status: cancelled ? 'cancelled' : (options.status ?? 'succeeded'), finalized_at: cancelled ? (options.neverFinalize ? null : 'now') : (options.status === 'running' || options.unfinalized ? null : 'now') })
+  const run = () => ({ id: 'run-1', status: wonByCompletion ? 'succeeded' : cancelled ? 'cancelled' : (options.status ?? 'succeeded'), finalized_at: options.finalizeAfter !== undefined && time >= options.finalizeAfter ? 'now' : cancelled ? (options.neverFinalize ? null : 'now') : (options.status === 'running' || options.unfinalized ? null : 'now') })
   const fetch = async (url, init = {}) => {
     const path = new URL(url).pathname
     const method = init.method ?? 'GET'
     calls.push([method, path, init])
     let body
     if (method === 'DELETE') return new Response(null, { status: options.deleteConflict ? 409 : 204 })
-    if (path.endsWith('/cancel')) { cancelled = true; body = run() }
+    if (path.endsWith('/cancel')) {
+      if (options.completionWinsCancel) wonByCompletion = true
+      if (options.cancelConflict || ['succeeded', 'failed', 'interrupted'].includes(run().status)) return new Response(null, { status: 409 })
+      cancelled = true; body = run()
+    }
     else if (path === '/api/v1/projects') body = { id: 'project-1' }
     else if (path.endsWith('/inputs')) {
       assert.equal(init.body.get('file').name, 'locations.csv')
@@ -88,10 +93,35 @@ test('120 second timeout cancels, waits for finalized, then deletes', async () =
   assert(f.calls.slice(cancel + 1, deletion).some(([method, path]) => method === 'GET' && path.endsWith('/run-1')))
 })
 
-test('terminal but unfinalized Run also uses cancel/finalized cleanup', async () => {
-  const f = fixture({ status: 'failed', unfinalized: true })
+test('terminal failed Run waits for finalization without unsupported cancellation', async () => {
+  const f = fixture({ status: 'failed', unfinalized: true, finalizeAfter: 1000 })
   await assert.rejects(runSmoke(f.args), /Run failed/)
-  assert(f.calls.some(([, path]) => path?.endsWith('/cancel')))
+  assert(!f.calls.some(([, path]) => path?.endsWith('/cancel')))
+  assert.equal(f.elapsed(), 1000)
+  assert(!f.logs.some((line) => line.includes('Cleanup:')))
+})
+
+test('succeeded but unfinalized Run completes cleanup without calling cancel (which returns 409)', async () => {
+  const f = fixture({ unfinalized: true, finalizeAfter: 1000 })
+  await runSmoke(f.args)
+  assert(!f.calls.some(([, path]) => path?.endsWith('/cancel')))
+  assert.equal(f.elapsed(), 1000)
+  assert(f.calls.some(([method]) => method === 'DELETE'))
+})
+
+test('completion racing cancellation refreshes 409 terminal state and waits for finalization', async () => {
+  const f = fixture({ status: 'running', completionWinsCancel: true, finalizeAfter: 121000 })
+  await assert.rejects(runSmoke(f.args), /120 seconds/)
+  assert.equal(f.elapsed(), 121000)
+  assert(!f.logs.some((line) => line.includes('Cleanup:')))
+  assert(f.calls.some(([method]) => method === 'DELETE'))
+})
+
+test('409 cancellation still reporting nonterminal state is not swallowed', async () => {
+  const f = fixture({ status: 'running', cancelConflict: true })
+  await assert.rejects(runSmoke(f.args), /120 seconds/)
+  assert(f.logs.some((line) => line.includes('Cleanup:') && line.includes('409')))
+  assert(f.calls.some(([method]) => method === 'DELETE'))
 })
 
 test('cleanup finalization timeout is bounded, still attempts delete and preserves original error', async () => {
