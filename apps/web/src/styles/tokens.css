@@ -1,0 +1,15 @@
+:root {
+  color-scheme: light;
+  --paper: #f5f2ea;
+  --paper-raised: #fbf9f3;
+  --paper-muted: #ece9df;
+  --ink: #28372f;
+  --ink-muted: #626b60;
+  --line: #d4d6c9;
+  --moss: #405b43;
+  --moss-light: #e4eadf;
+  --orange: #a45b2d;
+  --font-body: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-title: 'Iowan Old Style', 'Songti SC', 'STSong', serif;
+  --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+}
