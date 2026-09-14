@@ -46,6 +46,8 @@ func collect(events <-chan Event, errs <-chan error) ([]Event, error) {
 
 func TestRuntimeExecuteCarriesSnapshotAndTypedEvents(t *testing.T) {
 	request := requestFixture()
+	// Fixture selection belongs only to FakeProvider; the HTTP boundary preserves user text.
+	request.Prompt = "[fixture:agent-failure] literal user prompt"
 	client := runtimeClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/v1/runs/"+request.RunID.String()+"/execute" {
 			t.Errorf("request %s %s", r.Method, r.URL.Path)

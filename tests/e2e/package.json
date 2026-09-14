@@ -1,0 +1,6 @@
+{
+  "name": "harness-forge-e2e",
+  "private": true,
+  "scripts": { "test": "playwright test" },
+  "devDependencies": { "@playwright/test": "1.54.1", "typescript": "5.8.3" }
+}

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"harness-forge.local/control-plane/internal/agentexec"
@@ -14,6 +16,77 @@ import (
 
 func fakeRequest(id uuid.UUID, paths agentexec.Paths) agentexec.ExecuteRequest {
 	return agentexec.ExecuteRequest{Version: "1", RunID: id, ProjectID: uuid.New(), ConversationID: uuid.New(), Prompt: "report", Profile: agentexec.Profile{ID: "geo-analysis", Version: "1", Digest: "test", Config: map[string]any{}}, Paths: paths, Limits: agentexec.Limits{MaxTurns: 8, MaxBudgetUSD: 2}}
+}
+
+func TestFakeScenarioSelectionAndOutputs(t *testing.T) {
+	for _, tc := range []struct{ prompt, terminal, heading string; invalid bool }{
+		{"ordinary report", "agent.completed", "Geographic report", false},
+		{"[fixture:geo-report] report", "agent.completed", "Geographic report", false},
+		{"not a prefix [fixture:agent-failure]", "agent.completed", "Geographic report", false},
+		{"[fixture:success-v2] continue", "agent.completed", "Geographic report v2", false},
+		{"[fixture:agent-failure] fail", "agent.failed", "", false},
+		{"[fixture:invalid-manifest] publish", "agent.completed", "Invalid manifest report", true},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
+			p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime"))
+			if err != nil { t.Fatal(err) }
+			id := uuid.New(); paths := localPaths(t.TempDir(), id)
+			lease, err := p.Acquire(context.Background(), AcquireRequest{RunID:id, Paths:paths})
+			if err != nil { t.Fatal(err) }
+			r := fakeRequest(id, paths); r.Prompt = tc.prompt
+			events, errs := lease.Runtime().Execute(context.Background(), r)
+			var got []agentexec.Event
+			for event := range events { got = append(got, event) }
+			for err := range errs { t.Fatal(err) }
+			if err := contracts.ValidateRuntimeEventSequence(got); err != nil { t.Fatal(err) }
+			if got[len(got)-1].Type != tc.terminal { t.Fatalf("terminal = %s, want %s", got[len(got)-1].Type, tc.terminal) }
+			if tc.heading == "" { if _, err := os.Stat(paths.Outputs); !os.IsNotExist(err) { t.Fatalf("failure copied outputs: %v", err) }; return }
+			html, err := os.ReadFile(filepath.Join(paths.Outputs, "report", "index.html"))
+			if err != nil || !strings.Contains(string(html), tc.heading) { t.Fatalf("HTML = %s, error %v", html, err) }
+			manifest, err := os.ReadFile(filepath.Join(paths.Outputs, "artifact-manifest.json")); if err != nil { t.Fatal(err) }
+			_, err = contracts.ParseArtifactManifest(manifest)
+			if (err != nil) != tc.invalid { t.Fatalf("manifest error %v, invalid %v", err, tc.invalid) }
+		})
+	}
+}
+
+func TestFakeScenarioRejectsUnknownSelector(t *testing.T) {
+	for _, prompt := range []string{"[fixture:unknown]", "[fixture:../geo-report]", "[fixture:geo-report"} {
+		p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime")); if err != nil { t.Fatal(err) }
+		id := uuid.New(); paths := localPaths(t.TempDir(), id)
+		lease, _ := p.Acquire(context.Background(), AcquireRequest{RunID:id, Paths:paths})
+		r := fakeRequest(id, paths); r.Prompt = prompt
+		events, errs := lease.Runtime().Execute(context.Background(), r)
+		for event := range events { t.Errorf("unknown selector emitted %s", event.Type) }
+		if err := <-errs; !errors.Is(err, agentexec.ErrInvalid) { t.Errorf("%s error = %v", prompt, err) }
+	}
+}
+
+func TestFakeScenarioDelayedAndBlockingCancellation(t *testing.T) {
+	for _, name := range []string{"delayed-success", "blocking"} {
+		t.Run(name, func(t *testing.T) {
+			p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime")); if err != nil { t.Fatal(err) }
+			id := uuid.New(); paths := localPaths(t.TempDir(), id)
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second); defer cancel()
+			lease, _ := p.Acquire(ctx, AcquireRequest{RunID:id, Paths:paths})
+			r := fakeRequest(id, paths); r.Prompt = "[fixture:"+name+"]"
+			events, errs := lease.Runtime().Execute(ctx, r)
+			if name == "delayed-success" {
+				<-events; started := time.Now(); <-events
+				if time.Since(started) < time.Second { t.Error("missing 1000ms inter-event delay") }
+			} else {
+				for event := range events {
+					if contracts.IsTerminalEvent(event) { t.Fatal("blocking emitted terminal without cancellation") }
+					if event.Type == "artifact.candidate" { break }
+				}
+				select { case event := <-events: t.Fatalf("blocking released: %v", event); case <-time.After(150*time.Millisecond): }
+			}
+			cancel()
+			for event := range events { if contracts.IsTerminalEvent(event) { t.Fatal("terminal after cancellation") } }
+			if err := <-errs; !errors.Is(err, agentexec.ErrOutcomeUnknown) { t.Fatal(err) }
+			if err := lease.Runtime().Finalize(context.Background(), id, agentexec.Abort); err != nil { t.Fatal(err) }
+		})
+	}
 }
 
 func TestFakeProviderCopiesOutputsBeforeCompletedAndSyncBackDoesNothing(t *testing.T) {
