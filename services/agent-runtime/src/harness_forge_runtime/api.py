@@ -4,11 +4,12 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from harness_forge_runtime.errors import ExecutionConflict, InvalidExecutionState
 from harness_forge_runtime.execution_store import ExecutionStore
-from harness_forge_runtime.models import ContractModel
+from harness_forge_runtime.models import ContractModel, RunRequest
+from harness_forge_runtime.processes import ProcessManager
 from harness_forge_runtime.sessions import SessionStore
 from harness_forge_runtime.settings import RuntimeSettings
 
@@ -25,6 +26,7 @@ def create_app(
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        runtime_settings = settings or RuntimeSettings()
         execution_store = store or ExecutionStore(
             (settings or RuntimeSettings()).runtime_state_root
         )
@@ -33,7 +35,15 @@ def create_app(
         app.state.session_store = sessions or SessionStore(
             (settings or RuntimeSettings()).claude_config_dir
         )
-        yield
+        manager = ProcessManager(
+            execution_store, app.state.session_store, runtime_settings
+        )
+        app.state.process_manager = manager
+        await manager.recover()
+        try:
+            yield
+        finally:
+            await manager.close()
 
     app = FastAPI(lifespan=lifespan)
 
@@ -52,7 +62,7 @@ def create_app(
                 (
                     record
                     for record in await execution_store.list_unfinalized()
-                    if record.lifecycle == "running"
+                    if record.lifecycle in {"starting", "running"}
                 ),
                 None,
             )
@@ -75,12 +85,47 @@ def create_app(
     async def delete_execution(run_id: UUID) -> Response:
         try:
             async with app.state.execution_store.lifecycle_lock:
+                record = await app.state.execution_store.get(run_id)
+                if record is not None and record.disposition is None:
+                    raise ExecutionConflict("unfinalized execution cannot be deleted")
+                app.state.process_manager.delete_files(run_id)
+                # Keep terminal authority until all auxiliary cleanup is durable.
                 await app.state.execution_store.delete(run_id)
         except ExecutionConflict:
             return JSONResponse(status_code=409, content={"code": "conflict"})
         except OSError:
             return JSONResponse(
                 status_code=500, content={"code": "execution_operation_failed"}
+            )
+        return Response(status_code=204)
+
+    @app.post("/v1/runs/{run_id}/execute")
+    async def execute_run(run_id: UUID, body: RunRequest) -> Response:
+        if body.run_id != run_id:
+            return JSONResponse(status_code=422, content={"code": "run_id_mismatch"})
+        record = await app.state.execution_store.get(run_id)
+        if record is not None and record.disposition is not None:
+            return JSONResponse(content={"decision": record.disposition})
+        try:
+            handle = await app.state.process_manager.start(body)
+        except ExecutionConflict as error:
+            code = str(error)
+            if code in {"commit", "abort"}:
+                return JSONResponse(content={"decision": code})
+            return JSONResponse(status_code=409, content={"code": code})
+        except (OSError, ValueError):
+            return JSONResponse(
+                status_code=500, content={"code": "execution_operation_failed"}
+            )
+        return StreamingResponse(
+            app.state.process_manager.stream(handle), media_type="application/x-ndjson"
+        )
+
+    @app.post("/v1/runs/{run_id}/cancel", status_code=204)
+    async def cancel_run(run_id: UUID) -> Response:
+        if not await app.state.process_manager.cancel(run_id):
+            return JSONResponse(
+                status_code=404, content={"code": "execution_not_found"}
             )
         return Response(status_code=204)
 
