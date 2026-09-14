@@ -1492,6 +1492,8 @@ git commit -m "feat: stream conversations and run progress"
 **Files:**
 - Modify: `.env.example`
 - Modify: `docker-compose.yaml`
+- Modify: `services/control-plane/internal/artifacthttp/server.go`
+- Modify: `services/control-plane/internal/artifacthttp/server_test.go`
 - Create: `apps/web/src/app/config.ts`
 - Create: `apps/web/src/app/config.test.ts`
 - Create: `apps/web/src/features/artifacts/artifactStore.ts`
@@ -1504,11 +1506,11 @@ git commit -m "feat: stream conversations and run progress"
 - Modify: `apps/web/src/App.vue`
 - Modify: `apps/web/src/components/WorkbenchLayout.vue`
 
-- [ ] **Step 1: 写 iframe 隔离失败测试**
+- [x] **Step 1: 写 iframe 隔离失败测试**
 
 HTML iframe 只有 `sandbox="allow-scripts"`，没有 `allow-same-origin`；Markdown/data iframe 使用空 `sandbox`，image 用 `<img>`，都直接导航/加载独立 Gateway URL而不做跨 origin fetch。URL 只能来自后端 Artifact resource且 origin 必须等于 `VITE_ARTIFACT_ORIGIN`；切换 Conversation 清空不属于它的 selection。`.env.example` 增加 `ARTIFACT_PUBLIC_ORIGIN=http://localhost:8081`，Compose 同时传给 Go 生成 resource URL，并作为 `VITE_ARTIFACT_ORIGIN` 传给 Web。
 
-- [ ] **Step 2: 写版本体验失败测试**
+- [x] **Step 2: 写版本体验失败测试**
 
 默认选择最新成功 Run 的 primary；可切换其他 Artifact/旧 Run；当前失败时保留上一成功制品；无制品 Run 显示空状态。
 
@@ -1518,18 +1520,21 @@ Run: `cd apps/web && pnpm test -- --run src/app/config.test.ts src/features/arti
 
 Expected: FAIL，Artifact stores/viewers 尚不存在。
 
-- [ ] **Step 3: 实现 Artifact UI**
+- [x] **Step 3: 实现 Artifact UI**
 
 HTML 用 `sandbox="allow-scripts"` iframe；Markdown 和 data 因 Gateway 明确无 CORS，使用 `sandbox=""` iframe 让浏览器以 Gateway Content-Type 安全内联显示，并总是提供下载/新标签链接；image 使用 `<img>`。不得 `fetch` 后 `v-html`，V0 不在线编辑。`App.vue`/Workbench 将 ArtifactPanel 挂到右栏。
 
-- [ ] **Step 4: 验证并提交**
+实施校正（2026-09-14）：跨 origin 下载不能只依赖 `<a download>`，需由响应声明 attachment，参见 [HTML 下载规范](https://html.spec.whatwg.org/multipage/links.html#downloading-resources)。Gateway 仅在成功文件请求显式带 `?download=1` 时增加安全文件名的 `Content-Disposition: attachment`，普通预览、CSP 和无 CORS 边界保持不变；前端只从校验后的 backend `gateway_url` 派生下载链接。补充 Go 回归和真实浏览器下载事件/文件内容验收；V0 下载单个入口文件，不打包 HTML 资源目录。
+
+- [x] **Step 4: 验证并提交**
 
 ```bash
 cd apps/web
 pnpm test -- --run src/app/config.test.ts src/features/artifacts src/lib/artifact-viewer src/app/artifact-workbench.test.ts
 pnpm build
 cd ../..
-git add .env.example docker-compose.yaml apps/web/src
+go -C services/control-plane test ./internal/artifacthttp
+git add .env.example docker-compose.yaml apps/web/src services/control-plane/internal/artifacthttp
 git diff --cached --check
 git commit -m "feat: browse immutable run artifacts"
 ```

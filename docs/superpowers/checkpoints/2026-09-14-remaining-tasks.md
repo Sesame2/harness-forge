@@ -13,8 +13,8 @@
 - Task 17：完成；`e92246d` 三栏布局与路由，测试、真实浏览器及两阶段审查通过。
 - Task 18：完成；`7c1a90e` / `3236c04` / `7640e18`，Project、Conversation、上传及竞态修复，测试、真实浏览器与两阶段审查通过。
 - Task 19：完成；`8619f5c` / `8f3630b`，Chat、SSE、Run timeline，测试、真实浏览器与两阶段审查通过。
-- Task 20：下一任务；Artifact 版本与安全预览，持续执行。
-- Task 21：待实施；Fake scenarios 与真实浏览器 E2E。
+- Task 20：完成；`8d9d4b0`，Artifact 版本、安全预览和下载，测试、真实浏览器与两阶段审查通过。
+- Task 21：下一任务；Fake scenarios 与真实浏览器 E2E，持续执行。
 - Task 22：待实施；中文文档、完整测试、fresh clone 与第二 Docker 环境。
 
 ## 验证与环境边界
@@ -81,3 +81,15 @@ Task 16 checkpoint `1f442ce` 已快进合并并推送 main，main/origin/main/fe
 另用真实浏览器 fetch→Vite→Go 验证序号 1–3 后断流，以 Last-Event-ID: 3 重连，最终 1–8 与 GET events 完全一致。此项是传输契约验收；带延迟 fixture 的完整 UI 断线/工具步骤/取消 E2E 仍由 Task 21 提供，不提前声称完成。
 
 隔离栈 `hf-full-20260912` 保留用于 Task 20，本轮全部显式 Fake/空凭证。辅助浏览器脚本和截图在本机 `work/full-execution/task19-browser-probe.mjs`、`task19-sse-contract-probe.mjs`、`task19-desktop.png`、`task19-narrow.png`，不是仓库运行依赖。同步 checkpoint/main 后继续 Task 20；Task 22 第二独立 Docker 环境的授权边界不变。
+
+## Task 20 验证记录
+
+实现 `8d9d4b05e60b6b95fe352b5fab6a09490e3b1ec3`：Artifact 右栏、不可变版本列表、primary 默认选择、query 深链及实时成功更新。复用 ChatStore 的权威 Conversation Runs 读取，不重复请求 Runs；仅为 succeeded Run 读取 Artifact。切换版本不重载 Chat 或 Project 上传，切换 Conversation abort 旧读取并隔离 selection。相同毫秒/亚毫秒时间的 RED→GREEN 回归确认按后端先后顺序选择最新 Run。
+
+HTML 使用仅 allow-scripts 的 iframe，Markdown/data 使用空 sandbox，image 使用 img；资源 URL 必须由后端提供并匹配独立 Gateway origin，无 CORS fetch/v-html/在线编辑。下载仅包含入口文件，Gateway 按需 `?download=1` 返回标准库编码的 attachment 文件名；常规预览与安全响应头不变。具体实施校正及 HTML 标准来源已记录在计划 Task 20。
+
+父级独立完整 `make test`：Go/Python 253/Vitest 108/Node 17 通过，生产 build、diff check 通过。重建隔离 Go/Web 后，真实 Chromium 验证 opaque iframe 无法读取 parent.document、下载 index.html 与 Gateway 响应逐字节一致、新标签 opener 为 null、连续两次 Run 自动展示新版、UI 旧/新版切换保留聊天草稿、深链刷新、第二 Conversation 空态及外来 Artifact 不展示、390px 无横向溢出。桌面/窄屏截图已查看；窄屏等待 iframe 内 heading 后再截图，不把外层 iframe visible 当作内容已加载。
+
+最终 Project `109f3662-219b-49dc-9f21-ce83f6bd1fe1`，Runs `ac37f912-9017-4c89-8f35-7fd740fcf387` / `92fa9375-9f60-47d4-8770-7799d70e182a`，Artifacts `cb94faed-46fd-4c01-9fb5-143648639f89` / `40c453a3-d695-4c54-bf5f-2565b7acfffb`；本轮所有浏览器 Project 已逻辑删除并 purge，无 orphan。辅助 probe/截图位于本机 `work/full-execution/task20-browser-probe.mjs`、`task20-desktop.png`、`task20-narrow.png`，不是交付依赖。
+
+规格审查 PASS，独立前端 17 项及 Go artifacthttp/artifacts 通过；质量审查 PASS，独立前端 17 项、Gateway 和固定范围 diff 检查通过，无待修 findings。同步本 checkpoint/main 后继续 Task 21。
