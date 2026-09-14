@@ -1361,11 +1361,11 @@ Expected: Profile/image tests PASS；空 credential smoke 立即 FAIL（不发�
 - Modify: `apps/web/src/App.vue`
 - Modify: `apps/web/src/main.ts`
 
-- [ ] **Step 1: 使用 `@frontend-design` 固定视觉方向**
+- [x] **Step 1: 使用 `@frontend-design` 固定视觉方向**
 
 采用克制的地图制图工作台视觉语言，保持已批准的三栏信息架构；不得加入终端、代码编辑器或地图编辑器。
 
-- [ ] **Step 2: 写布局失败测试**
+- [x] **Step 2: 写布局失败测试**
 
 验证会话栏默认 240px/可折叠、Chat 默认 440px/可拖动、Artifact 占剩余宽度；窄屏使用 tabs；splitter 可键盘操作并具有 ARIA 属性。路由覆盖 `/`（Project onboarding）、`/projects/:projectId`（尚无 Conversation 时可上传/新建会话）、`/projects/:projectId/conversations/:conversationId`（完整工作台）及不存在参数回退。
 
@@ -1373,11 +1373,11 @@ Run: `cd apps/web && pnpm test -- --run src/components/ResizablePane.test.ts src
 
 Expected: FAIL，布局/router 尚不存在。
 
-- [ ] **Step 3: 实现布局与路由**
+- [x] **Step 3: 实现布局与路由**
 
 Pane 宽度只存 `localStorage`。`App.vue` 挂载 router view，`WorkbenchLayout` 提供 project/sidebar/chat/artifact slots；三种 route 使用同一 layout 按上下文显示 onboarding/空态/完整面板。Artifact selection 使用 query parameter；刷新深链不丢 project/conversation ID。
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 ```bash
 cd apps/web
