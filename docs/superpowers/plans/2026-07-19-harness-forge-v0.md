@@ -1410,7 +1410,7 @@ git commit -m "feat: add the three-pane application shell"
 - Modify: `apps/web/src/app/router.ts`
 - Modify: `apps/web/src/components/WorkbenchLayout.vue`
 
-- [ ] **Step 1: 写失败的 store/component 测试**
+- [x] **Step 1: 写失败的 store/component 测试**
 
 覆盖从空系统创建 `geo-analysis` Project 并导航 `/projects/{id}`、Project 切换、上传进度/取消/失败、Conversation 创建后导航完整 route、切换/重命名/逻辑删除、按 updated_at 分组、本地关键词过滤、409 active Run 提示。组合测试 mount `App.vue`，证明 ProjectSwitcher、InputFiles、ConversationSidebar 实际出现在 Workbench slots。
 
@@ -1418,17 +1418,17 @@ Run: `cd apps/web && pnpm test -- --run src/lib/api/upload.test.ts src/features/
 
 Expected: FAIL，stores/components/upload adapter 尚不存在。
 
-- [ ] **Step 2: 实现 typed fetch client**
+- [x] **Step 2: 实现 typed fetch client**
 
 普通 JSON/204 请求使用 typed fetch client，统一 Error envelope 与 AbortSignal；上传单独使用可注入 `XMLHttpRequest` 的 typed adapter，监听 `xhr.upload.progress`、映射后端 Error、支持 abort。不得伪造 fetch 上传进度，组件不得重复拼 URL 或解析错误。
 
-- [ ] **Step 3: 实现侧边栏和上传**
+- [x] **Step 3: 实现侧边栏和上传**
 
 V0 create dialog 的 Profile catalog 只有 `geo-analysis`，提交后以服务端 Project 为准。Project response 的 `accepted_input_media_types` 驱动 file picker `accept` 与前端早期提示，后端仍作权威校验；上传成功显示 digest/size。删除需要二次确认；409 提示先取消/等待 Run。
 
 `App.vue`/Workbench 将 ProjectSwitcher 和 InputFiles 挂到 Project 区，将 ConversationSidebar 挂到左栏；Project route 无会话时仍显示上传和“新建会话”。
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 ```bash
 cd apps/web

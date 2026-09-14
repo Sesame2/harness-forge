@@ -11,8 +11,8 @@
 - Task 1–15：已完成，历史见 [Task 15 checkpoint](2026-09-14-task-15.md)。
 - Task 16：完成；`bf7c029` / `2abdba1`，Geo Profile、固定地理依赖、ECharts vendor、opt-in smoke；测试和两阶段审查通过。
 - Task 17：完成；`e92246d` 三栏布局与路由，测试、真实浏览器及两阶段审查通过。
-- Task 18：下一任务；Project、Conversation、上传，持续执行。
-- Task 19：待实施；Chat、SSE、Run timeline。
+- Task 18：完成；`7c1a90e` / `3236c04` / `7640e18`，Project、Conversation、上传及竞态修复，测试、真实浏览器与两阶段审查通过。
+- Task 19：下一任务；Chat、SSE、Run timeline，持续执行。
 - Task 20：待实施；Artifact 版本与安全预览。
 - Task 21：待实施；Fake scenarios 与真实浏览器 E2E。
 - Task 22：待实施；中文文档、完整测试、fresh clone 与第二 Docker 环境。
@@ -50,3 +50,22 @@ Task 16 checkpoint `1f442ce` 已快进合并并推送 main，main/origin/main/fe
 重建隔离栈 Web 后，用真实 Chromium 验证拖动 +40px、键盘 +16px、刷新恢复宽度、侧栏折叠/展开、深链刷新、1280/1024/800/390px 无横向溢出、窄屏标签箭头与路径 fallback，全部通过，无 pageerror。父级已查看桌面/窄屏截图，符合克制制图工作台方向。辅助 probe 与 PNG 在本机 `work/full-execution/task17-browser-probe.mjs`、`task17-desktop.png`、`task17-narrow.png`；仓库自动组件回归不依赖这些辅助文件。
 
 独立规格审查和质量审查均 PASS，无待修 findings。父级完整 `make test`：Go/Python 253/Vitest 22/Node 17 全通过，生产 build 和 diff check 通过。同步 checkpoint/main 后接着 Task 18，不按旧单任务边界停止。
+
+## Task 18 验证记录
+
+实现 `7c1a90eca70ebb4f835297f2fd4cb64e9e343144`：typed JSON/204 与原生 XHR 上传、Project 创建/切换、Conversation 创建/切换/筛选/重命名/确认逻辑删除、Project 资料区及真实 App slots。复用现有 named routes，未为 router.ts 制造无意义修改，未增加依赖。
+
+父级独立完整 `make test`：Go/Python 253/Vitest 45/Node 17 通过。真实 Chromium→Go 验证创建/切换两个 Project、上传 CSV/digest、两个 Conversation 的重命名/筛选/删除/刷新、删除确认与 1280/1024/800/390px 无横向溢出。
+
+检查实际截图时发现新建 Conversation 的空 title 导致无名链接；Go 允许空 title，并在首条 Message 时自动命名，不能通过提交默认 title 修复。`3236c044dde4c8f937832e6f0ef0cbe9a75b4cf6` 仅为展示/操作标签/确认/筛选增加“新会话”兜底，保留原始字段与 POST `{}`。单测及真实浏览器都先 RED 再 GREEN；父级最终 Vitest 47、build、diff check 通过，规格复审 PASS。
+
+质量审查发现两项 Important，均由 `7640e187a9478208c9bc3a91e66213aeda283142` 修复并复审关闭：
+
+1. 同 Project 的 Conversation 导航误清空 Project context，导致上传组件卸载并 abort；现在保留同 Project 上传，仅真正切换 Project/卸载时清理。父级真实 Chromium 限速 XHR 从 RED 复验到 GREEN，上传在创建会话/导航后正常完成。
+2. Conversation 成功删除/重命名/创建可能被并发旧 list/get 快照覆盖；现在只为当前读取临时合并期间成功的 mutation，读取结束或切换 context 即释放，无永久 tombstone 或重试循环。旧 list/selected GET 不再覆盖成功修改。
+
+所有验收 Project 已逻辑删除并由隔离 `hf-full-20260912` purge 清理，无 orphan。真实容器共享目录权限验证显式使用 `HF_PERMISSIONS_INTEGRATION=1 HF_COMPOSE_PROJECT=hf-full-20260912`，通过 UID/GID 10001、inputs 不可写与 workspace/outputs 双向访问检查。Task 22 的全量 integration target 必须设置这两个实际开关，只有 `COMPOSE_PROJECT_NAME` 不会执行该权限用例。
+
+父级最终完整 `make test`：Go 全量/Python 253/Vitest 53/Node 17 通过，生产 build 与 diff check 通过。两套真实浏览器 probe 在最终代码重建后均通过，最终 Project `2471bfbe-ecc9-45be-a9ac-16e09c8b42fa`、`d4c0eba5-4a70-492c-bfe9-0042720f8aaa` 与限速上传 Project `732c1f0b-de79-4e0e-a4fd-60a48dcf240b` 已 purge。规格复审 PASS；质量复审独立 31 项及原始两项注入复现 PASS，无剩余 findings。
+
+本机验收辅助文件位于 `work/full-execution/task18-browser-probe.mjs`、`task18-upload-navigation-probe.mjs`、`task18-desktop.png`、`task18-narrow.png`；交付自动测试不依赖这些机器本地文件。同步本 checkpoint 与 main 后继续 Task 19。
