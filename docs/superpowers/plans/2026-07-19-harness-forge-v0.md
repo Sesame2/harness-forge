@@ -1455,11 +1455,11 @@ git commit -m "feat: manage projects conversations and inputs"
 - Modify: `apps/web/src/App.vue`
 - Modify: `apps/web/src/components/WorkbenchLayout.vue`
 
-- [ ] **Step 1: 写 SSE 断线重连失败测试**
+- [x] **Step 1: 写 SSE 断线重连失败测试**
 
 用 fetch-stream SSE（不使用不能自定义 header 的原生 EventSource）模拟 sequence 1–3 后断开，再连接发送 `Last-Event-ID: 3`；last sequence 按 `run_id` 隔离，重复 event 幂等，未知非终态 event 忽略。只有 `run.succeeded|run.failed|run.cancelled|run.interrupted` 这些 Go product terminal 才停止重连；`agent.completed/agent.failed` 仍继续等待 publication/finalize Event。组件卸载只 abort 浏览器 stream，不取消 Run。
 
-- [ ] **Step 2: 写 Chat/Timeline 失败测试**
+- [x] **Step 2: 写 Chat/Timeline 失败测试**
 
 提交后立即显示 user Message 和 queued Run；assistant delta 合并；tool step 折叠；错误显示安全 message 和 correlation ID；取消仅在 queued，或 running 且 phase 为 preparing/agent 时可见，publishing 时隐藏/禁用并解释“正在发布”。
 
@@ -1469,13 +1469,13 @@ Run: `cd apps/web && pnpm test -- --run src/lib/api/sse.test.ts src/features/run
 
 Expected: FAIL，SSE/stores/components 尚不存在。
 
-- [ ] **Step 3: 实现 SSE client 与 stores**
+- [x] **Step 3: 实现 SSE client 与 stores**
 
 Pinia 以 `Map<run_id,lastDurableSequence>` 保存游标；刷新时先拉 Conversation Runs 与各 Run 历史，再对非终态 Run 订阅增量。SSE client 接受 AbortSignal，以有上限的指数退避重连并发送对应 Run 的 Last-Event-ID；abort 只停止浏览器订阅。最终 `assistant.message` 替换/收口 delta preview，避免刷新后重复两条 Agent 回复。
 
 `App.vue`/Workbench 将 ChatPanel 与 RunTimeline 挂到中栏，route 变化时取消旧 Conversation streams 并加载新数据。
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 ```bash
 cd apps/web

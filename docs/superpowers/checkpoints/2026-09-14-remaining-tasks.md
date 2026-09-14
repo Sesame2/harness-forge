@@ -12,8 +12,8 @@
 - Task 16：完成；`bf7c029` / `2abdba1`，Geo Profile、固定地理依赖、ECharts vendor、opt-in smoke；测试和两阶段审查通过。
 - Task 17：完成；`e92246d` 三栏布局与路由，测试、真实浏览器及两阶段审查通过。
 - Task 18：完成；`7c1a90e` / `3236c04` / `7640e18`，Project、Conversation、上传及竞态修复，测试、真实浏览器与两阶段审查通过。
-- Task 19：下一任务；Chat、SSE、Run timeline，持续执行。
-- Task 20：待实施；Artifact 版本与安全预览。
+- Task 19：完成；`8619f5c` / `8f3630b`，Chat、SSE、Run timeline，测试、真实浏览器与两阶段审查通过。
+- Task 20：下一任务；Artifact 版本与安全预览，持续执行。
 - Task 21：待实施；Fake scenarios 与真实浏览器 E2E。
 - Task 22：待实施；中文文档、完整测试、fresh clone 与第二 Docker 环境。
 
@@ -69,3 +69,15 @@ Task 16 checkpoint `1f442ce` 已快进合并并推送 main，main/origin/main/fe
 父级最终完整 `make test`：Go 全量/Python 253/Vitest 53/Node 17 通过，生产 build 与 diff check 通过。两套真实浏览器 probe 在最终代码重建后均通过，最终 Project `2471bfbe-ecc9-45be-a9ac-16e09c8b42fa`、`d4c0eba5-4a70-492c-bfe9-0042720f8aaa` 与限速上传 Project `732c1f0b-de79-4e0e-a4fd-60a48dcf240b` 已 purge。规格复审 PASS；质量复审独立 31 项及原始两项注入复现 PASS，无剩余 findings。
 
 本机验收辅助文件位于 `work/full-execution/task18-browser-probe.mjs`、`task18-upload-navigation-probe.mjs`、`task18-desktop.png`、`task18-narrow.png`；交付自动测试不依赖这些机器本地文件。同步本 checkpoint 与 main 后继续 Task 19。
+
+## Task 19 验证记录
+
+实现 `8619f5c0088afc563a006c9cbf3cb2e8c08ca6a3`：原生 fetch-stream SSE、按 Run 游标和幂等重放、有限指数退避、Chat/Composer/RunTimeline 与真实 App 中栏接入。只有 Go product terminal 收口；agent terminal 继续等待发布和 finalize。切换会话仅停止浏览器订阅，不取消 Run；刷新从 Runs/events/messages 重建，不推测 Message 的 Run ID。canonical Message 按 ID 合并，保留两条文字相同的合法回复。
+
+规格审查发现聊天自动刷新会话 metadata 可能覆盖已完成的侧栏重命名；`8f3630bf5bd268277eeb9d7470022629b8e7cd3c` 把 metadata GET 纳入 ConversationStore 的 revision/selection 保护，提交后刷新和终态刷新两条路径都新增实际 App 回归。规格复审独立 48 项通过；质量审查独立 38 项通过，无待修 findings。
+
+父级完整测试 Go/Python 253/Vitest 91/Node 17、Web build 与 diff check 通过。真实浏览器验证同会话两个 Run 的相同回复不去重、刷新恢复、首条消息自动命名、第二会话首 Run 的 source_sdk_session_id 为 null、会话历史隔离及 390px 无横向溢出；桌面/窄屏截图已查看。最终 Project `d857ff3b-e386-4974-b7e7-32ffce90c72d` 与三个 Run `0057b614-3a75-4dbf-9997-d50f20a16930`、`f095e2f5-af37-47dd-8dc2-f8c54d14d1c2`、`9da2c5e1-b434-4b7d-a5c6-81b593c4a9f3` 完成后已逻辑删除并 purge，无 orphan。
+
+另用真实浏览器 fetch→Vite→Go 验证序号 1–3 后断流，以 Last-Event-ID: 3 重连，最终 1–8 与 GET events 完全一致。此项是传输契约验收；带延迟 fixture 的完整 UI 断线/工具步骤/取消 E2E 仍由 Task 21 提供，不提前声称完成。
+
+隔离栈 `hf-full-20260912` 保留用于 Task 20，本轮全部显式 Fake/空凭证。辅助浏览器脚本和截图在本机 `work/full-execution/task19-browser-probe.mjs`、`task19-sse-contract-probe.mjs`、`task19-desktop.png`、`task19-narrow.png`，不是仓库运行依赖。同步 checkpoint/main 后继续 Task 20；Task 22 第二独立 Docker 环境的授权边界不变。
