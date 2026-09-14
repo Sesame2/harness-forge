@@ -6,6 +6,7 @@ import App from '../App.vue'
 import ChatPanel from '../features/chat/ChatPanel.vue'
 import Composer from '../features/chat/Composer.vue'
 import RunTimeline from '../features/runs/RunTimeline.vue'
+import { useConversationStore } from '../features/conversations/conversationStore'
 import { createWorkbenchRouter } from './router'
 import { browserGlobals, conversation, json, project } from '../test/support'
 import { liveEvents, queuedRun, runEvent, userMessage } from '../test/runSupport'
@@ -82,6 +83,43 @@ it('mounts real chat/composer/timeline in the middle pane and shows each accepte
   expect(wrapper.get('[data-run-id="r2"]').text()).toContain('排队中')
   expect(fetcher.mock.calls.filter(([url, init]) => url.endsWith('/messages') && init?.method === 'POST')).toHaveLength(2)
   expect(localStorage.length).toBe(0)
+})
+
+it.each(['submit', 'terminal'])('keeps a completed sidebar rename when an older %s metadata refresh arrives last', async trigger => {
+  const { state, fetcher } = backend()
+  state.title = '原有标题'
+  const original = fetcher.getMockImplementation()!
+  const renamed = { ...conversation, title: '用户新标题', updated_at: '2026-09-14T10:00:00Z' }
+  let holdNextRead = false
+  let finishRead!: () => void
+  fetcher.mockImplementation(async (url, init) => {
+    if (url === '/api/v1/conversations/c1' && init?.method === 'PATCH') {
+      state.title = renamed.title
+      return json(renamed)
+    }
+    if (url === '/api/v1/conversations/c1' && holdNextRead) {
+      holdNextRead = false
+      const oldSnapshot = { ...conversation, title: state.title }
+      return new Promise<Response>(resolve => { finishRead = () => resolve(json(oldSnapshot)) })
+    }
+    return original(url, init)
+  })
+  const { wrapper } = await app()
+  if (trigger === 'terminal') await send(wrapper)
+  holdNextRead = true
+  if (trigger === 'submit') await send(wrapper)
+  else {
+    state.runs[0] = { ...state.runs[0]!, status: 'succeeded', finalized_at: '2026-09-14T09:00:00Z' }
+    state.streams.get('r1')!.send(runEvent(1, 'run.succeeded')); await flushPromises()
+  }
+  expect(finishRead).toBeTypeOf('function')
+  await wrapper.get('[aria-label="重命名 原有标题"]').trigger('click')
+  await wrapper.get('input[aria-label="会话标题"]').setValue(renamed.title)
+  await wrapper.get('#sidebar-pane form').trigger('submit'); await flushPromises()
+  expect(wrapper.get('#sidebar-pane a[href$="/c1"]').text()).toBe(renamed.title)
+  finishRead(); await flushPromises()
+  expect(wrapper.get('#sidebar-pane a[href$="/c1"]').text()).toBe(renamed.title)
+  expect(useConversationStore().selected).toEqual(renamed)
 })
 
 it('merges deltas, closes them with canonical replies, and preserves identical text blocks across refresh', async () => {

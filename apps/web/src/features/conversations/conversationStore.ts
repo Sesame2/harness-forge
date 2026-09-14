@@ -8,10 +8,12 @@ export const useConversationStore = defineStore('conversations', () => {
   const items = ref<Conversation[]>([])
   const selected = ref<Conversation | null>(null)
   let selection = 0
+  const revisions = new Map<string, number>()
   // Only mutations completed during the current read need to override its possibly older snapshot.
   let pendingChanges: Map<string, Conversation | null> | undefined
   function clear() {
     ++selection
+    revisions.clear()
     pendingChanges = undefined
     projectId.value = ''
     items.value = []
@@ -44,9 +46,18 @@ export const useConversationStore = defineStore('conversations', () => {
   }
   function remember(conversation: Conversation) {
     if (projectId.value !== conversation.project_id) return
+    revisions.set(conversation.id, (revisions.get(conversation.id) ?? 0) + 1)
     pendingChanges?.set(conversation.id, conversation)
     items.value = [...items.value.filter(item => item.id !== conversation.id), conversation]
     if (selected.value?.id === conversation.id) selected.value = conversation
+  }
+  async function refresh(id: string, signal: AbortSignal) {
+    const version = selection
+    const revision = (revisions.get(id) ?? 0) + 1
+    revisions.set(id, revision)
+    const result = await api.getConversation(id, signal)
+    // A newer refresh or completed mutation owns this resource now.
+    if (!signal.aborted && version === selection && revisions.get(id) === revision) remember(result)
   }
   async function create(id: string) {
     const result = await api.createConversation(id)
@@ -61,9 +72,10 @@ export const useConversationStore = defineStore('conversations', () => {
     const owner = projectId.value
     await api.deleteConversation(id)
     if (projectId.value !== owner) return
+    revisions.set(id, (revisions.get(id) ?? 0) + 1)
     pendingChanges?.set(id, null)
     items.value = items.value.filter(item => item.id !== id)
     if (selected.value?.id === id) selected.value = null
   }
-  return { projectId, items, selected, clear, load, create, rename, remove, remember }
+  return { projectId, items, selected, clear, load, create, rename, remove, refresh }
 })

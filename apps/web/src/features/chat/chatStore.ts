@@ -36,10 +36,6 @@ export const useChatStore = defineStore('chat', () => {
     const result = await api.listMessages(id, signal)
     if (!signal.aborted) mergeMessages(result)
   }
-  async function refreshConversation(id: string, signal: AbortSignal) {
-    const result = await api.getConversation(id, signal)
-    if (!signal.aborted) conversations.remember(result)
-  }
   function subscribe(run: Run, signal: AbortSignal) {
     if (run.finalized_at && runs.events.get(run.id)?.some(event => isProductTerminal(event.type))) return
     const id = run.conversation_id
@@ -55,7 +51,7 @@ export const useChatStore = defineStore('chat', () => {
         }
         if (isProductTerminal(event.type)) {
           const [current] = await Promise.all([
-            api.getRun(run.id, signal), refreshMessages(id, signal), refreshConversation(id, signal),
+            api.getRun(run.id, signal), refreshMessages(id, signal), conversations.refresh(id, signal),
           ])
           if (signal.aborted) return
           runs.upsert(current)
@@ -113,7 +109,7 @@ export const useChatStore = defineStore('chat', () => {
       mergeMessages([result.message]); runs.upsert(result.run)
       subscribe(result.run, signal)
       // The accepted message must not wait for sidebar metadata to refresh.
-      void refreshConversation(id, signal).catch(cause => {
+      void conversations.refresh(id, signal).catch(cause => {
         if (!signal.aborted) error.value = describeError(cause, id)
       })
       return true
