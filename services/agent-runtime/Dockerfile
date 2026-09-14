@@ -9,6 +9,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev
+ENV PATH="/app/.venv/bin:$PATH"
 
 RUN groupadd --gid 10001 app && useradd --uid 10001 --gid 10001 --create-home app
 USER 10001:10001

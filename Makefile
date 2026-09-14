@@ -22,6 +22,16 @@ test-python:
 
 test-web:
 	cd apps/web && pnpm test -- --run
+	cd apps/web && node --test scripts/smoke-claude.test.mjs
+
+smoke-claude:
+	@test -n "$$ANTHROPIC_API_KEY" || (echo 'ANTHROPIC_API_KEY is required' && exit 1)
+	@export SANDBOX_PROVIDER=docker; status=0; \
+	  docker compose -f docker-compose.yaml up -d --build --wait && \
+	  (cd apps/web && pnpm exec playwright install chromium && node scripts/smoke-claude.mjs) || status=$$?; \
+	  if [ $$status -ne 0 ]; then docker compose -f docker-compose.yaml logs --tail=200 control-plane agent-runtime; fi; \
+	  $(MAKE) purge-deleted || { cleanup_status=$$?; if [ $$status -eq 0 ]; then status=$$cleanup_status; fi; }; \
+	  exit $$status
 
 test-integration:
 	docker compose -f docker-compose.yaml up -d --wait postgres minio

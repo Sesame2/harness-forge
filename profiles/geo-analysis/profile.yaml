@@ -4,11 +4,12 @@ display_name: Geo Analysis
 system_prompt: system-prompt.md
 workspace_template: workspace-template
 tools:
-  allowed: [Read, Write, Bash]
-  permission_mode: acceptEdits
+  allowed: [Read, Write, Edit, Bash, Glob, Grep]
+  disallowed: [WebFetch, WebSearch, NotebookEdit]
+  permission_mode: default
 agent:
-  max_turns: 20
-  max_budget_usd: 5
+  max_turns: 8
+  max_budget_usd: 2.0
 inputs:
   accepted_media_types: [text/csv, application/geo+json]
 artifacts:
