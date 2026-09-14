@@ -100,7 +100,7 @@ async function switchTab(event: KeyboardEvent, index: number) {
             <div class="chat-empty">
               <span class="section-kicker">{{ !projectId ? '起点 / START HERE' : conversationId ? '会话 / READY TO EXPLORE' : '项目 / WORKSPACE' }}</span>
               <h1>{{ !projectId ? '先建立一个项目' : conversationId ? '从一个问题开始' : '选择或新建会话' }}</h1>
-              <p>{{ !projectId ? '将数据、问题和分析制品归于一处。项目是每一次探索的起点。' : conversationId ? '围绕项目资料描述问题。对话能力接入后，分析过程将在这里展开。' : '当前项目已定位。这里将支持上传资料，并为新的分析建立会话。' }}</p>
+              <p>{{ !projectId ? '将数据、问题和分析制品归于一处。使用顶部的新建项目开始探索。' : conversationId ? '围绕项目资料描述问题。对话能力接入后，分析过程将在这里展开。' : '展开顶部的项目资料即可上传文件，再到会话栏为新的分析建立会话。' }}</p>
               <ol v-if="!projectId" class="onboarding-steps">
                 <li><span>01</span><div><h3>建立项目</h3><p>为资料与分析确定一个空间</p></div></li>
                 <li><span>02</span><div><h3>添加资料</h3><p>整理本次分析需要的数据</p></div></li>
@@ -108,7 +108,7 @@ async function switchTab(event: KeyboardEvent, index: number) {
               </ol>
               <div v-else class="context-card"><span class="eyebrow">{{ conversationId ? 'CONVERSATION' : 'PROJECT' }}</span><code>{{ conversationId || projectId }}</code></div>
             </div>
-            <div class="composer-placeholder"><span class="status-dot" aria-hidden="true" />{{ conversationId ? '聊天功能尚未接入' : '项目功能尚未接入' }}<span class="eyebrow">SHELL / V0</span></div>
+            <div class="composer-placeholder"><span class="status-dot" aria-hidden="true" />{{ conversationId ? '聊天功能尚未接入' : '资料与会话就绪后，在此展开分析' }}<span class="eyebrow">WORKSPACE / V0</span></div>
           </slot>
         </div>
       </ResizablePane>

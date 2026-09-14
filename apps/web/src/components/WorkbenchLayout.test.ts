@@ -4,7 +4,6 @@ import { createPinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
 import { h, nextTick } from 'vue'
 import entry from '../../index.html?raw'
-import App from '../App.vue'
 import { createWorkbenchRouter } from '../app/router'
 import WorkbenchLayout from './WorkbenchLayout.vue'
 
@@ -37,9 +36,8 @@ async function workbench(path = '/', slots?: Record<string, (...args: any[]) => 
   const router = createWorkbenchRouter(createMemoryHistory())
   await router.push(path)
   await router.isReady()
-  const wrapper = slots
-    ? mount(WorkbenchLayout, { attachTo: document.body, slots, global: { plugins: [createPinia(), router] } })
-    : mount(App, { attachTo: document.body, global: { plugins: [createPinia(), router] } })
+  // Shell contracts stay isolated here; onboarding.test mounts the real App and business slots.
+  const wrapper = mount(WorkbenchLayout, { attachTo: document.body, slots, global: { plugins: [createPinia(), router] } })
   mounted.push(wrapper)
   await flushPromises()
   return { wrapper, router }
