@@ -1250,7 +1250,7 @@ git commit -m "feat: execute isolated runtime workers"
 - Create: `apps/web/scripts/smoke-claude.test.mjs`
 - Modify: `Makefile`
 
-- [ ] **Step 1: 写 vendored asset 失败测试**
+- [x] **Step 1: 写 vendored asset 失败测试**
 
 在 `test_geo_profile.py` 先写 `test_vendored_echarts_assets`，验证 ECharts asset/license 存在、checksum 正确且 HTML 目标路径固定。
 
@@ -1258,7 +1258,7 @@ Run: `cd services/agent-runtime && uv run pytest tests/test_geo_profile.py -k ve
 
 Expected: FAIL，asset 尚不存在。
 
-- [ ] **Step 2: 实现可重复 vendor asset**
+- [x] **Step 2: 实现可重复 vendor asset**
 
 `scripts/vendor-echarts.sh` 只允许 `echarts@5.6.0`，用 `npm pack` 在临时目录解包并复制 asset/LICENSE，然后硬校验 SHA-256：`echarts.min.js=bf4a223524e40b77c304bec67e1222cf551f14880cf42c69dc046558e11c07b1`、`LICENSE=634293835b43a6dd2094fa39182a3d9a6b9ca43b7fdb9ac354e8037af2a3093a`。checksum 不符非零退出；运行两次 git diff 必须为空。报告查看时不访问 CDN。
 
@@ -1266,7 +1266,7 @@ Run: `bash scripts/vendor-echarts.sh && bash scripts/vendor-echarts.sh && git di
 
 Expected: PASS 且第二次无 diff。确认绿色后进入 Profile policy 下一轮红测。
 
-- [ ] **Step 3: 写并实现精确 Profile policy**
+- [x] **Step 3: 写并实现精确 Profile policy**
 
 新增 `test_profile_policy_and_prompt`，检查以下精确值。
 
@@ -1282,7 +1282,7 @@ Run: `cd services/agent-runtime && uv run pytest tests/test_geo_profile.py -k pr
 
 Expected: PASS。确认绿色后进入依赖/镜像下一轮红测。
 
-- [ ] **Step 4: 写并实现锁定依赖与非 root 镜像**
+- [x] **Step 4: 写并实现锁定依赖与非 root 镜像**
 
 先新增 `test_dependency_lock_and_runtime_user`，检查六个精确依赖版本、基础镜像和 UID/GID；运行确认 FAIL：
 
@@ -1305,7 +1305,7 @@ Run: `cd services/agent-runtime && uv run pytest tests/test_geo_profile.py -k de
 
 Expected: PASS。
 
-- [ ] **Step 5: 测试并实现 opt-in smoke target**
+- [x] **Step 5: 测试并实现 opt-in smoke target**
 
 先用 Node built-in test + mocked fetch/browser 测试成功、Run failed、120 秒 timeout、cancel/finally cleanup、pageerror 和 failed request；文件尚不存在时运行：
 
@@ -1332,7 +1332,7 @@ Run: `cd apps/web && node --test scripts/smoke-claude.test.mjs`
 
 Expected: PASS。确认绿色后执行最终验证。
 
-- [ ] **Step 6: 验证并提交**
+- [x] **Step 6: 验证并提交**
 
 ```bash
 cd services/agent-runtime && uv run pytest tests/test_geo_profile.py -v
