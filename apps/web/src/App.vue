@@ -20,7 +20,8 @@ watch([() => route.params.projectId, () => route.params.conversationId], async (
   loading.value = Boolean(projectId)
   conversations.clear()
   try {
-    await projects.load(String(projectId || ''), controller.signal)
+    // Inputs belong to the project; conversation navigation must not unmount an active upload.
+    if (projects.selected?.id !== projectId) await projects.load(String(projectId || ''), controller.signal)
     if (controller.signal.aborted || !projectId) return
     await conversations.load(String(projectId), String(conversationId || ''), controller.signal)
   } catch (cause) {

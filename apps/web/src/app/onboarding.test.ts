@@ -88,6 +88,41 @@ it('does not reload project context or abort upload when only artifact query cha
   expect(fetch).toHaveBeenCalledTimes(callCount)
 })
 
+it.each(['/projects/p2', '/'])('keeps upload alive through same-project conversation navigation, but aborts on leaving to %s', async destination => {
+  FakeXHR.instances = []
+  vi.stubGlobal('XMLHttpRequest', FakeXHR)
+  const second = { ...conversation, id: 'c2', title: '另一会话' }
+  const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url === '/api/v1/projects') return json([project, { ...project, id: 'p2' }])
+    if (url === '/api/v1/projects/p1') return json(project)
+    if (url === '/api/v1/projects/p2') return json({ ...project, id: 'p2' })
+    if (url === '/api/v1/projects/p1/conversations') return options?.method === 'POST' ? json(conversation, 201) : json([conversation, second])
+    if (url === '/api/v1/conversations/c1') return json(conversation)
+    if (url === '/api/v1/conversations/c2') return json(second)
+    return json([])
+  })
+  vi.stubGlobal('fetch', fetch)
+  const { wrapper, router } = await app('/projects/p1')
+  const picker = wrapper.get('input[type="file"]')
+  Object.defineProperty(picker.element, 'files', { value: [new File(['x'], 'x.csv', { type: 'text/csv' })] })
+  await picker.trigger('change')
+  const xhr = FakeXHR.instances[0]!
+  xhr.progress(30, 100); await flushPromises()
+  await wrapper.get('[aria-label="新建会话"]').trigger('click'); await flushPromises()
+  expect(router.currentRoute.value.path).toBe('/projects/p1/conversations/c1')
+  expect(xhr.aborted).toBe(false)
+  expect(wrapper.get('progress').attributes('value')).toBe('30')
+  await wrapper.get('a[href="/projects/p1/conversations/c2"]').trigger('click'); await flushPromises()
+  expect(router.currentRoute.value.path).toBe('/projects/p1/conversations/c2')
+  expect(xhr.aborted).toBe(false)
+  expect(wrapper.get('progress').attributes('value')).toBe('30')
+  expect(fetch.mock.calls.filter(([url]) => url === '/api/v1/projects/p1')).toHaveLength(1)
+  expect(fetch.mock.calls.filter(([url]) => url === '/api/v1/projects/p1/inputs')).toHaveLength(1)
+  await router.push(destination); await flushPromises()
+  expect(xhr.aborted).toBe(true)
+  expect(wrapper.find('progress').exists()).toBe(false)
+})
+
 it('keeps late project creation in the list without hijacking a newer route', async () => {
   let resolve!: (value: Response) => void
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
@@ -112,4 +147,30 @@ it('explains malformed route IDs rather than presenting backend invalid request 
     : json({ code: 'bad_request', message: 'invalid request', details: null, request_id: 'r' }, 400)))
   const { wrapper } = await app('/projects/not-an-id')
   expect(wrapper.get('#chat-pane [role="alert"]').text()).toContain('链接无效')
+})
+
+it('does not resurrect a deleted conversation when an older list arrives after same-project navigation', async () => {
+  const second = { ...conversation, id: 'c2', title: '保留的会话' }
+  let finishDelete!: (value: Response) => void
+  let finishList!: (value: Response) => void
+  let lists = 0
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (url === '/api/v1/projects') return json([project])
+    if (url === '/api/v1/projects/p1') return json(project)
+    if (url === '/api/v1/conversations/c1' && options?.method === 'DELETE') return new Promise<Response>(resolve => { finishDelete = resolve })
+    if (url === '/api/v1/projects/p1/conversations') return ++lists === 1 ? json([conversation, second])
+      : new Promise<Response>(resolve => { finishList = resolve })
+    if (url === '/api/v1/conversations/c1') return json(conversation)
+    if (url === '/api/v1/conversations/c2') return json(second)
+    return json([])
+  }))
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  const { wrapper, router } = await app('/projects/p1/conversations/c1')
+  await wrapper.get('[aria-label="删除 河流分析"]').trigger('click')
+  await router.push('/projects/p1/conversations/c2'); await flushPromises()
+  finishDelete(json(null, 204)); await flushPromises()
+  finishList(json([conversation, second])); await flushPromises()
+  expect(router.currentRoute.value.path).toBe('/projects/p1/conversations/c2')
+  expect(wrapper.get('#sidebar-pane').text()).toContain('保留的会话')
+  expect(wrapper.find('a[href="/projects/p1/conversations/c1"]').exists()).toBe(false)
 })

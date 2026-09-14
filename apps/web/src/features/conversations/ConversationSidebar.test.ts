@@ -108,3 +108,67 @@ it('does not navigate after a pending creation when the user has moved to anothe
   expect(store.items).toEqual([])
   wrapper.unmount()
 })
+
+it('keeps a successful rename when a stale selected-conversation GET finishes afterward', async () => {
+  const renamed = { ...conversation, title: '新标题', updated_at: '2026-09-14T11:00:00Z' }
+  let finishRename!: (value: Response) => void
+  let finishRead!: (value: Response) => void
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === 'PATCH') return new Promise<Response>(resolve => { finishRename = resolve })
+    if (url.endsWith('/conversations')) return json([conversation])
+    return new Promise<Response>(resolve => { finishRead = resolve })
+  }))
+  const store = useConversationStore()
+  store.projectId = 'p1'; store.items = [conversation]
+  const rename = store.rename('c1', '新标题')
+  const read = store.load('p1', 'c1', new AbortController().signal)
+  await flushPromises()
+  finishRename(json(renamed)); await rename
+  finishRead(json(conversation)); await read
+  expect(store.items).toEqual([renamed])
+  expect(store.selected).toEqual(renamed)
+  // The overlay ends with this read; later authoritative snapshots are not masked forever.
+  const newer = { ...renamed, title: '外部更新' }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json([newer])).mockResolvedValueOnce(json(newer)))
+  await store.load('p1', 'c1', new AbortController().signal)
+  expect(store.selected).toEqual(newer)
+})
+
+it('keeps a newly created conversation when an older list omits it', async () => {
+  const created = { ...conversation, id: 'c2', title: '' }
+  let finishCreate!: (value: Response) => void
+  let finishList!: (value: Response) => void
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === 'POST') return new Promise<Response>(resolve => { finishCreate = resolve })
+    if (url.endsWith('/conversations')) return new Promise<Response>(resolve => { finishList = resolve })
+    return json(conversation)
+  }))
+  const store = useConversationStore()
+  store.projectId = 'p1'
+  const create = store.create('p1')
+  const read = store.load('p1', 'c1', new AbortController().signal)
+  finishCreate(json(created, 201)); await create
+  finishList(json([conversation])); await read
+  expect(store.items).toEqual([conversation, created])
+  expect(store.selected).toEqual(conversation)
+})
+
+it('does not restore a deleted selected conversation from an older GET', async () => {
+  let finishDelete!: (value: Response) => void
+  let finishRead!: (value: Response) => void
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === 'DELETE') return new Promise<Response>(resolve => { finishDelete = resolve })
+    if (url.endsWith('/conversations')) return json([conversation])
+    return new Promise<Response>(resolve => { finishRead = resolve })
+  }))
+  const store = useConversationStore()
+  store.projectId = 'p1'; store.items = [conversation]
+  const remove = store.remove('c1')
+  const read = store.load('p1', 'c1', new AbortController().signal)
+  await flushPromises()
+  finishDelete(json(null, 204)); await remove
+  finishRead(json(conversation))
+  await expect(read).rejects.toThrow('已被删除')
+  expect(store.items).toEqual([])
+  expect(store.selected).toBeNull()
+})
