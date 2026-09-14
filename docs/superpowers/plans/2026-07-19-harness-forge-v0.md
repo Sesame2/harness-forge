@@ -1680,11 +1680,15 @@ test-integration:
 	  docker compose -f docker-compose.yaml -p $$project up -d --build --wait postgres minio minio-init runtime-volume-init control-plane agent-runtime; \
 	  docker compose -f docker-compose.yaml -p $$project exec -T control-plane sh -c 'test "$$SANDBOX_PROVIDER" = fake'; \
 	  TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:25432/harness_forge?sslmode=disable' \
-	  TEST_MINIO_ENDPOINT='localhost:29000' TEST_MINIO_ACCESS_KEY='harness_forge' TEST_MINIO_SECRET_KEY='local-dev-only' \
-	  COMPOSE_PROJECT_NAME=$$project go -C services/control-plane test -tags=integration ./internal/... -v
+	  TEST_MINIO_ENDPOINT='http://localhost:29000' TEST_MINIO_ACCESS_KEY='harness_forge' TEST_MINIO_SECRET_KEY='local-dev-only' \
+	  HF_PERMISSIONS_INTEGRATION=1 HF_COMPOSE_PROJECT=$$project COMPOSE_PROJECT_NAME=$$project go -C services/control-plane test -p 1 -tags=integration ./internal/... -v
 ```
 
 该命令运行 postgres、projects、runs、cleanup、workspace permissions 及任何后续 `//go:build integration` tests，并由 trap 始终清除隔离 volumes。
+
+实施校正（2026-09-14）：上述 shell 示例在落地 Make target 时须使用绝对 Compose 路径或子 shell，避免切换目录后 trap 找不到文件；隔离目标使用空 env-file，并显式固定所有内部数据库/MinIO/Runtime 连接、共享路径及空 Claude 凭证，不能仅覆盖 host ports 而继承开发连接。MinIO 测试 helper 解析完整 URL，必须保留 `http://`；真实容器权限验证还必须设置 `HF_PERMISSIONS_INTEGRATION=1` 与 `HF_COMPOSE_PROJECT`，否则该用例会 skip。
+
+同次复验确认测试包共用数据库级 `harness-forge:artifact-maintenance` advisory lock，schema 隔离不会隔离该锁；跨包并行可让 lock availability 断言误报泄漏，故全量 integration target 使用 `-p 1` 按包执行，保留各测试内部并发与 race 验证，不削弱生产锁或删除断言。
 
 ```bash
 make test
