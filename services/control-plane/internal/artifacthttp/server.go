@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -74,6 +75,9 @@ func NewServer(metadata artifactReader, objects objectstore.Store, webOrigin str
 				return
 			}
 			entry := (&url.URL{Path: "/artifacts/" + id.String() + "/" + record.EntryPath}).EscapedPath()
+			if r.URL.Query().Get("download") == "1" {
+				entry += "?download=1"
+			}
 			http.Redirect(w, r, entry, http.StatusFound)
 			return
 		}
@@ -113,6 +117,9 @@ func NewServer(metadata artifactReader, objects objectstore.Store, webOrigin str
 		}
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+		if r.URL.Query().Get("download") == "1" {
+			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(relative)}))
+		}
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
 			_, _ = io.Copy(w, body)

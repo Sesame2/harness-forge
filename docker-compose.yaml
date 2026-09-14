@@ -117,6 +117,8 @@ services:
   web:
     build:
       context: ./apps/web
+    environment:
+      VITE_ARTIFACT_ORIGIN: ${ARTIFACT_PUBLIC_ORIGIN:-http://localhost:8081}
     ports:
       - "5173:5173"
     depends_on:

@@ -3,6 +3,7 @@ package artifacthttp
 import (
 	"context"
 	"errors"
+	"mime"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +12,47 @@ import (
 	"harness-forge.local/control-plane/internal/artifacts"
 	"harness-forge.local/control-plane/internal/objectstore"
 )
+
+func TestGatewayDownloadIsOptInAndUsesSafeEntryFilename(t *testing.T) {
+	id := uuid.New()
+	prefix := "projects/" + uuid.NewString() + "/artifacts/" + id.String() + "/"
+	entry := "report/河流 \"总结\".html"
+	objects := objectstore.NewMemory()
+	if err := objects.Put(context.Background(), prefix+entry, strings.NewReader("<h1>河流</h1>"), objectstore.PutOptions{ContentType: "text/html; charset=utf-8"}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(&metadata{records: map[uuid.UUID]artifacts.Artifact{id: {ID: id, ObjectPrefix: prefix, EntryPath: entry}}}, objects, "https://web.example")
+	for _, query := range []string{"", "?download=0", "?download=1"} {
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, httptest.NewRequest("GET", "/artifacts/"+id.String()+"/report/河流%20%22总结%22.html"+query, nil))
+		if w.Code != 200 || w.Body.String() != "<h1>河流</h1>" {
+			t.Fatalf("%d: %s", w.Code, w.Body.String())
+		}
+		if query == "?download=1" {
+			kind, params, err := mime.ParseMediaType(w.Header().Get("Content-Disposition"))
+			if err != nil || kind != "attachment" || params["filename"] != "河流 \"总结\".html" {
+				t.Fatalf("unsafe or missing attachment: %v %v %v", kind, params, err)
+			}
+		} else if w.Header().Get("Content-Disposition") != "" {
+			t.Fatal("preview forced to download")
+		}
+		if w.Header().Get("Access-Control-Allow-Origin") != "" || !strings.Contains(w.Header().Get("Content-Security-Policy"), "connect-src 'none'") {
+			t.Fatal(w.Header())
+		}
+	}
+	for _, suffix := range []string{"", "/"} {
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, httptest.NewRequest("GET", "/artifacts/"+id.String()+suffix+"?download=1", nil))
+		if w.Code != 302 || !strings.HasSuffix(w.Header().Get("Location"), "?download=1") {
+			t.Fatalf("download redirect lost opt-in: %v", w.Header())
+		}
+	}
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, httptest.NewRequest("GET", "/artifacts/"+id.String()+"/missing.html?download=1", nil))
+	if w.Code != 404 || w.Header().Get("Content-Disposition") != "" {
+		t.Fatal("error must not download", w.Header())
+	}
+}
 
 type metadata struct {
 	records map[uuid.UUID]artifacts.Artifact

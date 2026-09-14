@@ -66,3 +66,14 @@ export interface RunEvent {
 }
 
 export interface SubmitMessageResult { message: Message; run: Run }
+
+export interface Artifact {
+  id: string
+  run_id: string
+  title: string
+  type: 'html' | 'markdown' | 'image' | 'data'
+  entry_path: string
+  is_primary: boolean
+  gateway_url: string
+  created_at: string
+}

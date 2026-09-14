@@ -5,6 +5,7 @@ import ProjectSwitcher from './features/projects/ProjectSwitcher.vue'
 import InputFiles from './features/projects/InputFiles.vue'
 import ConversationSidebar from './features/conversations/ConversationSidebar.vue'
 import ChatPanel from './features/chat/ChatPanel.vue'
+import ArtifactPanel from './features/artifacts/ArtifactPanel.vue'
 import { useProjectStore } from './features/projects/projectStore'
 import { useConversationStore } from './features/conversations/conversationStore'
 import { ApiError, errorMessage } from './lib/api/client'
@@ -53,6 +54,10 @@ watch([() => route.params.projectId, () => route.params.conversationId], async (
             <RouterLink :to="projects.selected ? { name: 'project', params: { projectId: projects.selected.id } } : '/'">{{ projects.selected ? '返回项目' : '返回项目首页' }}</RouterLink>
           </template>
         </div>
+      </template>
+      <template #artifact>
+        <ArtifactPanel v-if="!loading && !routeError && conversations.selected" :key="conversations.selected.id" :conversation-id="conversations.selected.id" />
+        <div v-else class="artifact-canvas"><div class="artifact-empty"><span class="section-kicker">成果预览 / OUTPUT</span><h2>尚无制品</h2><p>选择会话后，查看地图、表格与报告。</p></div></div>
       </template>
     </component>
   </RouterView>

@@ -1,4 +1,4 @@
-import type { Conversation, ErrorEnvelope, InputFile, Message, Project, Run, RunEvent, SubmitMessageResult } from './types'
+import type { Artifact, Conversation, ErrorEnvelope, InputFile, Message, Project, Run, RunEvent, SubmitMessageResult } from './types'
 
 export class ApiError extends Error implements ErrorEnvelope {
   status: number
@@ -61,6 +61,7 @@ export const api = {
   listMessages: (id: string, signal?: AbortSignal) => request<Message[]>(`${conversationPath(id)}/messages`, 'GET', undefined, signal),
   submitMessage: (id: string, content: string, signal?: AbortSignal) => request<SubmitMessageResult>(`${conversationPath(id)}/messages`, 'POST', { content }, signal),
   listRuns: (id: string, signal?: AbortSignal) => request<Run[]>(`${conversationPath(id)}/runs`, 'GET', undefined, signal),
+  listArtifacts: (id: string, signal?: AbortSignal) => request<Artifact[]>(`${runPath(id)}/artifacts`, 'GET', undefined, signal),
   getRun: (id: string, signal?: AbortSignal) => request<Run>(runPath(id), 'GET', undefined, signal),
   listRunEvents: (id: string, after = 0, signal?: AbortSignal) => request<RunEvent[]>(`${runEventsPath(id)}?after_sequence=${after}`, 'GET', undefined, signal),
   cancelRun: (id: string, signal?: AbortSignal) => request<Run>(`${runPath(id)}/cancel`, 'POST', undefined, signal),
