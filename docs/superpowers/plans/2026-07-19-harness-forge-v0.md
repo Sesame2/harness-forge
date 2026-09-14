@@ -1185,7 +1185,7 @@ git commit -m "feat: adapt Claude Agent SDK sessions"
 - Create: `services/agent-runtime/tests/test_processes.py`
 - Create: `services/agent-runtime/tests/test_execute_stream.py`
 
-- [ ] **Step 1: 写 worker NDJSON 失败测试**
+- [x] **Step 1: 写 worker NDJSON 失败测试**
 
 用 fake Claude adapter 驱动完整 worker：验证已有 Workspace → SDK init/fork → Profile policy → normalized assistant/tool events → Manifest validator → `artifact.candidate` → 唯一 `agent.completed`。失败分支唯一 terminal 为 `agent.failed`；stdout 每行一个 V1 event、sequence 递增，stderr 不混入协议。candidate 必须先写 control FD 并获 parent ack，才可输出 Artifact/terminal event。
 
@@ -1193,7 +1193,7 @@ Run: `cd services/agent-runtime && uv run pytest tests/test_runner.py -v`
 
 Expected: FAIL，runner orchestration 尚不存在。
 
-- [ ] **Step 2: 实现 runner 编排并确认绿色**
+- [x] **Step 2: 实现 runner 编排并确认绿色**
 
 Runner 串接 Workspace validation、Claude adapter、candidate created/durable control handshake、event normalization 和 Manifest validation。只有 transcript 与 execution record 均 durable 后才输出 `artifact.candidate` 与唯一 agent terminal。
 
@@ -1201,7 +1201,7 @@ Run: `cd services/agent-runtime && uv run pytest tests/test_runner.py -v`
 
 Expected: PASS。确认绿色后进入 process/API 下一轮红测。
 
-- [ ] **Step 3: 写取消和 restart 失败测试**
+- [x] **Step 3: 写取消和 restart 失败测试**
 
 覆盖 active duplicate 同 Run 409 `already_running`、不同 Run 409 `runtime_busy`、awaiting-finalize duplicate 409、committed/aborted duplicate 200 JSON disposition且不启动 worker。Cancel 对 starting 必须设置取消意图并与 spawn lock 串行：Popen 前取消则永不 spawn，Popen 后则关闭 barrier、终止并 wait，任何路径都不得放行 child；确认没有活动进程后必须原子转为 `awaiting_finalize`，让 Go 可以 `finalize(abort)` 后 Release。running 先 SIGTERM、超时后 SIGKILL，确认 inactive 后同样转 awaiting-finalize；重复 cancel 204；awaiting/terminal cancel 204，未知 Run 404。客户端断流后父进程继续 drain 到 event log并更新 awaiting_finalize。
 
@@ -1211,7 +1211,7 @@ Run: `cd services/agent-runtime && uv run pytest tests/test_processes.py tests/t
 
 Expected: FAIL，process manager/execute endpoint 尚不存在。
 
-- [ ] **Step 4: 实现 worker process 与 `application/x-ndjson` endpoint**
+- [x] **Step 4: 实现 worker process 与 `application/x-ndjson` endpoint**
 
 API server 将 ExecuteRequest 原子写入 execution directory，记录 baseline Session IDs，建立 start/candidate-control pipes，以 `python -m harness_forge_runtime.runner <request-file>` 启动新 process group。ProcessManager 的 per-run async lock 串行 spawn/cancel；父进程持久化 PGID并再次检查 cancel intent 后才放行。Popen 前取消、barrier 阶段取消、running 取消和 restart cleanup 都必须在确认无活动进程后原子转 `awaiting_finalize`，不得让 starting/running record 阻塞 abort。candidate control message 持久化并 ack。stdout 同时写 execution event log与 HTTP stream；客户端断开不取消 worker，server 继续消费并记录唯一终态，worker exit 后转 awaiting_finalize。
 
@@ -1221,7 +1221,7 @@ Run: `cd services/agent-runtime && uv run pytest tests/test_processes.py tests/t
 
 Expected: PASS。确认绿色后执行本 Task 全量验证。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 ```bash
 cd services/agent-runtime

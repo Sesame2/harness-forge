@@ -4,9 +4,9 @@
 
 ## 当前进度与恢复入口
 
-Task 1–14 已完成，按用户要求暂停；下次从 Task 15 恢复。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-09-13-task-14.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
+Task 1–15 已完成，按用户要求暂停；下次从 Task 16 恢复。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-09-14-task-15.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
 
 - [中文设计规格](docs/superpowers/specs/2026-07-19-harness-forge-design.zh-CN.md)
 - [实施计划](docs/superpowers/plans/2026-07-19-harness-forge-v0.md)
 
-当前并非完整可用的地理分析应用；Claude 执行链路与业务前端仍在后续任务中。
+当前并非完整可用的地理分析应用；Runtime worker、流式执行与取消恢复已完成 fixture 验证，Geo Profile、真实 Claude opt-in smoke 与业务前端仍在后续任务中。

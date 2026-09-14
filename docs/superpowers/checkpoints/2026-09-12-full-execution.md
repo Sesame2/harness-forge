@@ -2,7 +2,7 @@
 
 ## 当前授权与执行方式
 
-用户最新要求（2026-09-13）：完成当前 Task 14 后，更新 checkpoint、同步并上传主分支，然后停止。此前连续执行全部任务的授权边界已被本次要求替换；本轮不开始 Task 15。Task 14 已完成测试、规格与质量审查；最新状态和恢复步骤以 [Task 14 checkpoint](2026-09-13-task-14.md) 为准，下方历史中的“下一任务”不再代表当前指令。下次用户说“继续”时，从 Task 15 恢复，不重做已通过的任务。
+用户于 2026-09-14 说“继续”，本轮完成 Task 15 后更新 checkpoint、同步并上传主分支，然后停止，不开始 Task 16。此前“全部任务连续执行”的指令不再代表当前授权边界。Task 15 已完成测试、规格与质量审查；最新状态和恢复步骤以 [Task 15 checkpoint](2026-09-14-task-15.md) 为准，下方历史中的“下一任务”不再代表当前指令。下次用户说“继续”时，从 Task 16 恢复，不重做已通过的任务。
 
 工作树：`/Users/mei/Desktop/Project/harness-forge/.worktrees/v0-implementation`，分支 `feat/v0-implementation`。起始提交 `ac341b5`；Task 1–6 已完成。以[已批准计划](../plans/2026-07-19-harness-forge-v0.md)为范围，不提前加入 E2B adapter、通用 shell API 或新产品功能。
 
@@ -16,14 +16,15 @@
 - Task 11：完成；`bdca98b` 与测试补充 `86c744c`，规格/质量审查与真实 CLI 验收通过。
 - Task 12：完成；`5c38e84`，规格/质量审查、77 项 Python 测试和真实容器持久化验证通过。
 - Task 13：完成；`fcf6642` 与权限修复 `5e50900`，规格/质量审查及真实 Go→Runtime 校验通过。
-- Task 14：完成；`026dcaa`，固定 SDK Session adapter、fork/staging/finalize，184 项 Python 测试、规格与质量审查通过；额外容器多轮验收因 Docker 管理接口超时未完成。
-- Task 15–16：待实施；worker、Geo Profile/smoke。
+- Task 14：完成；`026dcaa`，固定 SDK Session adapter、fork/staging/finalize，184 项 Python 测试、规格与质量审查通过；额外容器多轮验收于 2026-09-14 补验通过，环境例外已关闭。
+- Task 15：完成；`4e96f53` 主体、`31a70b9` / `8ebc0cb` 审查修复；macOS/Linux 全量各 250 项 Python 测试、真实 TCP/进程组验收及独立规格/质量审查通过。未调用真实 Claude。
+- Task 16：待实施；Geo Profile、固定地理依赖与 opt-in smoke。
 - Task 17–21：待实施；三栏前端、产品操作、SSE、Artifact 展示、Fake E2E。
 - Task 22：待实施；中文交付文档、本机干净检出与第二环境验收。
 
 ## 环境与待确认事项
 
-- 本轮隔离验证环境为 Compose project `hf-full-20260912`，新 PostgreSQL/MinIO 卷，不操作默认项目数据。
+- 本轮隔离验证环境为 Compose project `hf-full-20260912`，新 PostgreSQL/MinIO 卷，不操作默认项目数据。Task 15 最终验收后已停止并删除该项目的测试容器、网络和卷；下次需要时显式 Fake/空凭证重建。
 - Go 命令使用 `GOTOOLCHAIN=local env -u GOROOT`；数据库测试使用独立 schema。
 - 默认测试不得使用真实 Claude 凭证；`make smoke-claude` 保持人工 opt-in。不会读取宿主 Claude 配置来绕过此限制。
 - 已异步询问用户是否允许添加/运行 GitHub Actions 作为第二独立 Docker 验证环境；未收到授权前不擅自运行外部 CI。此事项不阻塞本机实现。
