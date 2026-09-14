@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -81,9 +82,10 @@ if mode == "missing_artifact": emit(1, "agent.completed", {"candidate_sdk_sessio
 emit(1, "assistant.message", {"text": "hello"})
 if mode == "bad_sequence": emit(1, "assistant.message", {"text":"duplicate sequence"})
 if mode == "redact":
-    emit(2, "tool.started", {"tool_call_id":"read", "name":"Read", "input":{"nested":{"text":"TOKEN=fake-value", "value":os.environ["ANTHROPIC_API_KEY"]}}})
+    emit(2, "tool.started", {"tool_call_id":"read", "name":"Read", "input":{"nested":{"text":"TOKEN=fake-value", "value":os.environ["ANTHROPIC_API_KEY"], "token":"fixture-sensitive-token", "access_token":"fixture-sensitive-access"}}})
     print("Authorization: Bearer fake-bearer", file=sys.stderr, flush=True)
     print("credential " + os.environ["ANTHROPIC_API_KEY"], file=sys.stderr, flush=True)
+    print(json.dumps({"password":"fixture-sensitive-password"}), file=sys.stderr, flush=True)
     print("x" * 70000, file=sys.stderr, flush=True)
     emit(3, "artifact.candidate", {"artifacts": []})
     emit(4, "agent.completed", {"candidate_sdk_session_id":candidate, "artifacts":[]})
@@ -304,7 +306,10 @@ async def test_redaction_preserves_nested_json_and_bounds_stderr(tmp_path, monke
     assert events[-1]["type"] == "agent.completed"
     tool = next(event for event in events if event["type"] == "tool.started")
     assert tool["payload"]["input"]["nested"]["text"] == "[redacted]"
+    assert tool["payload"]["input"]["nested"]["token"] == "[redacted]"
+    assert tool["payload"]["input"]["nested"]["access_token"] == "[redacted]"
     persisted = handle.log_path.read_text() + handle.stderr_path.read_text()
+    assert "fixture-sensitive-" not in persisted
     assert all(
         value not in persisted
         for value in ("fake-value", "fake-bearer", "fixture-credential-12345")
@@ -366,6 +371,35 @@ async def test_cancel_rechecks_lifecycle_after_waiting_for_spawn_lock(
     monkeypatch.setattr(store, "get", get)
     monkeypatch.setattr(module, "stop_group", forbidden)
     await manager.cancel(turn.run_id)
+
+
+@pytest.mark.parametrize(
+    "key", ["token", "access_token", "refresh-token", "authToken", "PASSWORD"]
+)
+def test_sensitive_dictionary_keys_are_redacted_recursively(key):
+    module = processes_module()
+    result = module.redact_payload(
+        {"input": [{key: "fixture-sensitive-value", "safe": "kept"}]}
+    )
+    assert result == {"input": [{key: "[redacted]", "safe": "kept"}]}
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        '{"password": "fixture-sensitive-value"}',
+        '{"nested": {"access_token": "fixture-sensitive-value"}, "safe": "kept"}',
+        'SDK diagnostic: {"password": "fixture-sensitive-value with spaces"}',
+        "SDK diagnostic: {'token': 'fixture-sensitive-value with spaces'}",
+        'SDK diagnostic: {"token": "fixture-sensitive-value\\" escaped"}',
+    ],
+)
+def test_quoted_diagnostic_secrets_are_redacted(diagnostic):
+    result = processes_module().redact(diagnostic)
+    assert "fixture-sensitive-value" not in result
+    assert "with spaces" not in result and "escaped" not in result
+    if diagnostic.startswith("{"):
+        json.loads(result)
 
 
 def test_orphan_before_pid_record_exits_on_barrier_eof(tmp_path):
@@ -528,6 +562,66 @@ async def test_event_journal_failure_does_not_block_abort_of_stopped_worker(
     assert (await store.get(turn.run_id)).lifecycle == "awaiting_finalize"
     await manager.cancel(turn.run_id)
     await store.finalize(turn.run_id, "abort")
+
+
+@pytest.mark.asyncio
+async def test_failed_ack_flush_and_close_still_closes_all_streams_and_finishes(
+    tmp_path, monkeypatch
+):
+    module, turn, store, manager = await manager_fixture(tmp_path)
+    fixture_popen(monkeypatch, module)
+    original_popen = module.subprocess.Popen
+    original_fdopen = os.fdopen
+    streams = []
+    failed_flush = []
+
+    class FailingClose:
+        def __init__(self, stream, *, ack=False):
+            self.stream, self.ack = stream, ack
+            streams.append(self)
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def flush(self):
+            if self.ack:
+                failed_flush.append(True)
+                raise BrokenPipeError("synthetic ACK flush failure")
+            return self.stream.flush()
+
+        def close(self):
+            try:
+                self.stream.close()
+            finally:
+                raise BrokenPipeError("synthetic close failure")
+
+    def popen(*args, **kwargs):
+        child = original_popen(*args, **kwargs)
+        child.stdout, child.stderr = (
+            FailingClose(child.stdout),
+            FailingClose(child.stderr),
+        )
+        return child
+
+    def fdopen(fd, mode, *args, **kwargs):
+        stream = original_fdopen(fd, mode, *args, **kwargs)
+        return (
+            FailingClose(stream, ack=mode == "wb")
+            if mode in {"rb", "wb"} and stat.S_ISFIFO(os.fstat(fd).st_mode)
+            else stream
+        )
+
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+    monkeypatch.setattr(os, "fdopen", fdopen)
+    handle = await manager.start(turn)
+    await asyncio.wait_for(handle.task, 5)
+    assert failed_flush == [True]
+    assert len(streams) == 4 and all(stream.closed for stream in streams)
+    assert handle.changed.is_set()
+    assert (await store.get(turn.run_id)).lifecycle == "awaiting_finalize"
+    assert [
+        json.loads(line)["type"] for line in handle.log_path.read_text().splitlines()
+    ] == ["agent.failed"]
 
 
 @pytest.mark.asyncio

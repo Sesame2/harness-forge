@@ -91,6 +91,12 @@ async def stop_group(pgid: int, process: subprocess.Popen[bytes] | None = None) 
 
 
 def redact(value: str) -> str:
+    try:
+        structured = json.loads(value)
+    except (ValueError, RecursionError):
+        structured = None
+    if isinstance(structured, (dict, list)):
+        return json.dumps(redact_payload(structured))
     for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
         secret = os.environ.get(name)
         if secret:
@@ -100,7 +106,7 @@ def redact(value: str) -> str:
         r"(?i)\b(?:bearer\s+|sk-(?:ant-)?)[A-Za-z0-9_.-]+", "[redacted]", value
     )
     return re.sub(
-        r"(?i)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s]+",
+        r"""(?i)\b(?:api[_-]?key|(?:access[_-]?|refresh[_-]?|auth[_-]?)?token|password|secret)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)""",
         "[redacted]",
         value,
     )
@@ -113,7 +119,7 @@ def redact_payload(value: Any) -> Any:
         return {
             key: "[redacted]"
             if re.search(
-                r"(?i)(?:api[_-]?key|auth[_-]?token|password|secret|^env(?:ironment)?$)",
+                r"(?i)(?:api[_-]?key|token|password|secret|^env(?:ironment)?$)",
                 key,
             )
             else redact_payload(item)
@@ -510,6 +516,13 @@ class ProcessManager:
                     # A journal failure cannot keep an already stopped run active.
                     await self.store.mark_awaiting_finalize(handle.request.run_id)
             finally:
-                for stream in streams:
-                    stream.close()
-                handle.changed.set()
+                try:
+                    for stream in streams:
+                        try:
+                            stream.close()
+                        except OSError:
+                            # A broken buffered ACK can retry its failed flush on close.
+                            # Its control-task failure was already handled above.
+                            pass
+                finally:
+                    handle.changed.set()
