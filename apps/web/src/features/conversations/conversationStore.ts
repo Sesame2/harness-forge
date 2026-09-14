@@ -65,5 +65,5 @@ export const useConversationStore = defineStore('conversations', () => {
     items.value = items.value.filter(item => item.id !== id)
     if (selected.value?.id === id) selected.value = null
   }
-  return { projectId, items, selected, clear, load, create, rename, remove }
+  return { projectId, items, selected, clear, load, create, rename, remove, remember }
 })

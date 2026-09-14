@@ -33,3 +33,36 @@ export interface ErrorEnvelope {
   details: Record<string, unknown> | null
   request_id: string
 }
+
+export interface Message {
+  id: string
+  conversation_id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export interface Run {
+  id: string
+  conversation_id: string
+  trigger_message_id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+  phase: 'preparing' | 'agent' | 'publishing' | null
+  // Runtime failures carry code/message/retryable without HTTP request metadata.
+  error: { code: string; message: string; request_id?: string; details?: Record<string, unknown> | null; retryable?: boolean } | null
+  source_sdk_session_id: string | null
+  candidate_sdk_session_id: string | null
+  finalized_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RunEvent {
+  run_id: string
+  sequence: number
+  type: string
+  payload: Record<string, unknown>
+  occurred_at: string
+}
+
+export interface SubmitMessageResult { message: Message; run: Run }

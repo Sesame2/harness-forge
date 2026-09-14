@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import ProjectSwitcher from './features/projects/ProjectSwitcher.vue'
 import InputFiles from './features/projects/InputFiles.vue'
 import ConversationSidebar from './features/conversations/ConversationSidebar.vue'
+import ChatPanel from './features/chat/ChatPanel.vue'
 import { useProjectStore } from './features/projects/projectStore'
 import { useConversationStore } from './features/conversations/conversationStore'
 import { ApiError, errorMessage } from './lib/api/client'
@@ -43,8 +44,9 @@ watch([() => route.params.projectId, () => route.params.conversationId], async (
         <ConversationSidebar v-if="projects.selected && !loading && !routeError" :key="projectId" :project-id="projectId" :conversation-id="conversationId" />
         <p v-else class="sidebar-empty">{{ loading ? '正在读取项目…' : routeError ? '请检查项目或会话链接。' : '先创建或选择项目，再建立会话。' }}</p>
       </template>
-      <template v-if="loading || routeError" #chat>
-        <div class="chat-empty">
+      <template v-if="loading || routeError || conversations.selected" #chat>
+        <ChatPanel v-if="!loading && !routeError && conversations.selected" :key="conversations.selected.id" :conversation-id="conversations.selected.id" />
+        <div v-else class="chat-empty">
           <p v-if="loading" role="status">正在读取工作空间…</p>
           <template v-else>
             <p role="alert" class="error-message">{{ routeError }}</p>

@@ -1,4 +1,4 @@
-import type { Conversation, ErrorEnvelope, InputFile, Project } from './types'
+import type { Conversation, ErrorEnvelope, InputFile, Message, Project, Run, RunEvent, SubmitMessageResult } from './types'
 
 export class ApiError extends Error implements ErrorEnvelope {
   status: number
@@ -45,6 +45,8 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
 const conversationPath = (id: string) => `/conversations/${encodeURIComponent(id)}`
 export const inputPath = (id: string) => `${projectPath(id)}/inputs`
+const runPath = (id: string) => `/runs/${encodeURIComponent(id)}`
+export const runEventsPath = (id: string) => `${runPath(id)}/events`
 
 export const api = {
   listProjects: (signal?: AbortSignal) => request<Project[]>('/projects', 'GET', undefined, signal),
@@ -56,4 +58,10 @@ export const api = {
   createConversation: (id: string, signal?: AbortSignal) => request<Conversation>(`${projectPath(id)}/conversations`, 'POST', {}, signal),
   renameConversation: (id: string, title: string, signal?: AbortSignal) => request<Conversation>(conversationPath(id), 'PATCH', { title }, signal),
   deleteConversation: (id: string, signal?: AbortSignal) => request<void>(conversationPath(id), 'DELETE', undefined, signal),
+  listMessages: (id: string, signal?: AbortSignal) => request<Message[]>(`${conversationPath(id)}/messages`, 'GET', undefined, signal),
+  submitMessage: (id: string, content: string, signal?: AbortSignal) => request<SubmitMessageResult>(`${conversationPath(id)}/messages`, 'POST', { content }, signal),
+  listRuns: (id: string, signal?: AbortSignal) => request<Run[]>(`${conversationPath(id)}/runs`, 'GET', undefined, signal),
+  getRun: (id: string, signal?: AbortSignal) => request<Run>(runPath(id), 'GET', undefined, signal),
+  listRunEvents: (id: string, after = 0, signal?: AbortSignal) => request<RunEvent[]>(`${runEventsPath(id)}?after_sequence=${after}`, 'GET', undefined, signal),
+  cancelRun: (id: string, signal?: AbortSignal) => request<Run>(`${runPath(id)}/cancel`, 'POST', undefined, signal),
 }
