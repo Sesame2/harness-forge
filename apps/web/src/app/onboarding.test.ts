@@ -18,12 +18,13 @@ async function app(path = '/') {
   return { wrapper, router }
 }
 it('creates an empty-system geo project, mounts actual project/input/sidebar actions, then creates a conversation', async () => {
+  const unnamedConversation = { ...conversation, title: '' }
   const fetch = vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith('/projects') && options?.method === 'POST') return json(project, 201)
     if (url.endsWith('/projects')) return json([])
     if (url.endsWith('/projects/p1')) return json(project)
-    if (url.endsWith('/conversations') && options?.method === 'POST') return json(conversation, 201)
-    if (url.endsWith('/conversations/c1')) return json(conversation)
+    if (url.endsWith('/conversations') && options?.method === 'POST') return json(unnamedConversation, 201)
+    if (url.endsWith('/conversations/c1')) return json(unnamedConversation)
     return json([])
   })
   vi.stubGlobal('fetch', fetch)
@@ -36,7 +37,7 @@ it('creates an empty-system geo project, mounts actual project/input/sidebar act
   expect(wrapper.get('.project-context input[type="file"]').attributes('accept')).toContain('text/csv')
   await wrapper.get('#sidebar-pane [aria-label="新建会话"]').trigger('click'); await flushPromises()
   expect(router.currentRoute.value.path).toBe('/projects/p1/conversations/c1')
-  expect(wrapper.get('#sidebar-pane').text()).toContain('河流分析')
+  expect(wrapper.get('#sidebar-pane a[href="/projects/p1/conversations/c1"]').text()).toBe('新会话')
   expect(localStorage.length).toBe(0)
 })
 it('switches projects and never displays a late response or previous project conversations', async () => {

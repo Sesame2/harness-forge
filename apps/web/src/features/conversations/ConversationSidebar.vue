@@ -16,13 +16,15 @@ const busy = ref(false)
 const error = ref('')
 let alive = true
 onBeforeUnmount(() => { alive = false })
+// Display only: an empty persisted title enables server-side naming on the first message.
+function displayTitle(item: Conversation) { return item.title.trim() || '新会话' }
 const groups = computed(() => {
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
   const week = new Date(today); week.setDate(week.getDate() - 6)
   const labels = ['今天', '昨天', '最近七天', '更早']
   const groups = labels.map(label => ({ label, items: [] as Conversation[] }))
-  const items = store.items.filter(item => item.project_id === props.projectId && item.title.toLocaleLowerCase().includes(keyword.value.trim().toLocaleLowerCase()))
+  const items = store.items.filter(item => item.project_id === props.projectId && displayTitle(item).toLocaleLowerCase().includes(keyword.value.trim().toLocaleLowerCase()))
     .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
   for (const item of items) {
     const updated = Date.parse(item.updated_at)
@@ -50,7 +52,7 @@ async function rename() {
   finally { if (alive) busy.value = false }
 }
 async function remove(item: Conversation) {
-  if (busy.value || !window.confirm(`删除会话「${item.title}」？删除后将不再显示在项目中。`)) return
+  if (busy.value || !window.confirm(`删除会话「${displayTitle(item)}」？删除后将不再显示在项目中。`)) return
   busy.value = true; error.value = ''
   try {
     await store.remove(item.id)
@@ -75,10 +77,10 @@ async function remove(item: Conversation) {
             <div class="row-actions"><button type="submit" class="quiet-button" :disabled="busy || !title.trim()">保存</button><button type="button" class="quiet-button" :disabled="busy" @click="editing = ''">取消</button></div>
           </form>
           <template v-else>
-            <RouterLink :to="{ name: 'conversation', params: { projectId, conversationId: item.id } }" :aria-current="item.id === conversationId ? 'page' : undefined">{{ item.title }}</RouterLink>
+            <RouterLink :to="{ name: 'conversation', params: { projectId, conversationId: item.id } }" :aria-current="item.id === conversationId ? 'page' : undefined">{{ displayTitle(item) }}</RouterLink>
             <div class="row-actions">
-              <button type="button" :aria-label="`重命名 ${item.title}`" :disabled="busy" @click="edit(item)">重命名</button>
-              <button type="button" :aria-label="`删除 ${item.title}`" :disabled="busy" @click="remove(item)">删除</button>
+              <button type="button" :aria-label="`重命名 ${displayTitle(item)}`" :disabled="busy" @click="edit(item)">重命名</button>
+              <button type="button" :aria-label="`删除 ${displayTitle(item)}`" :disabled="busy" @click="remove(item)">删除</button>
             </div>
           </template>
         </li>
