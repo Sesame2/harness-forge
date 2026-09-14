@@ -101,7 +101,11 @@ def redact(value: str) -> str:
         secret = os.environ.get(name)
         if secret:
             value = value.replace(secret, "[redacted]")
-    value = re.sub(r"\b[A-Z][A-Z0-9_]*(?:=|:\s*)[^\s]+", "[redacted]", value)
+    value = re.sub(
+        r"""\b[A-Z][A-Z0-9_]*(?:=|:\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)""",
+        "[redacted]",
+        value,
+    )
     value = re.sub(
         r"(?i)\b(?:bearer\s+|sk-(?:ant-)?)[A-Za-z0-9_.-]+", "[redacted]", value
     )

@@ -402,6 +402,24 @@ def test_quoted_diagnostic_secrets_are_redacted(diagnostic):
         json.loads(result)
 
 
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        'PASSWORD="fixture-secret with spaces"',
+        'TOKEN="fixture-secret with spaces"',
+        "PASSWORD='fixture-secret with spaces'",
+        'TOKEN="fixture-secret\\" with spaces"',
+    ],
+)
+def test_uppercase_quoted_assignment_is_fully_redacted_in_both_sinks(assignment):
+    module = processes_module()
+    text = "SDK diagnostic: " + assignment
+    assert module.redact(text) == "SDK diagnostic: [redacted]"
+    assert module.redact_payload({"text": text}) == {
+        "text": "SDK diagnostic: [redacted]"
+    }
+
+
 def test_orphan_before_pid_record_exits_on_barrier_eof(tmp_path):
     # The real runner may be started here, but cannot cross its closed barrier or query SDK.
     processes_module()
