@@ -1,0 +1,2 @@
+{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"phase.changed","occurred_at":"2026-07-19T00:00:00Z","payload":{"phase":"agent"}}
+{"version":"1","run_id":"00000000-0000-0000-0000-000000000001","sequence":2,"type":"agent.failed","occurred_at":"2026-07-19T00:00:01Z","payload":{"code":"fixture_failure","message":"Deterministic agent failure.","retryable":false}}

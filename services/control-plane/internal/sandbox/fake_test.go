@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,10 @@ func fakeRequest(id uuid.UUID, paths agentexec.Paths) agentexec.ExecuteRequest {
 }
 
 func TestFakeScenarioSelectionAndOutputs(t *testing.T) {
-	for _, tc := range []struct{ prompt, terminal, heading string; invalid bool }{
+	for _, tc := range []struct {
+		prompt, terminal, heading string
+		invalid                   bool
+	}{
 		{"ordinary report", "agent.completed", "Geographic report", false},
 		{"[fixture:geo-report] report", "agent.completed", "Geographic report", false},
 		{"not a prefix [fixture:agent-failure]", "agent.completed", "Geographic report", false},
@@ -29,63 +33,185 @@ func TestFakeScenarioSelectionAndOutputs(t *testing.T) {
 	} {
 		t.Run(tc.prompt, func(t *testing.T) {
 			p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime"))
-			if err != nil { t.Fatal(err) }
-			id := uuid.New(); paths := localPaths(t.TempDir(), id)
-			lease, err := p.Acquire(context.Background(), AcquireRequest{RunID:id, Paths:paths})
-			if err != nil { t.Fatal(err) }
-			r := fakeRequest(id, paths); r.Prompt = tc.prompt
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := uuid.New()
+			paths := localPaths(t.TempDir(), id)
+			lease, err := p.Acquire(context.Background(), AcquireRequest{RunID: id, Paths: paths})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := fakeRequest(id, paths)
+			r.Prompt = tc.prompt
 			events, errs := lease.Runtime().Execute(context.Background(), r)
 			var got []agentexec.Event
-			for event := range events { got = append(got, event) }
-			for err := range errs { t.Fatal(err) }
-			if err := contracts.ValidateRuntimeEventSequence(got); err != nil { t.Fatal(err) }
-			if got[len(got)-1].Type != tc.terminal { t.Fatalf("terminal = %s, want %s", got[len(got)-1].Type, tc.terminal) }
-			if tc.heading == "" { if _, err := os.Stat(paths.Outputs); !os.IsNotExist(err) { t.Fatalf("failure copied outputs: %v", err) }; return }
+			for event := range events {
+				got = append(got, event)
+			}
+			for err := range errs {
+				t.Fatal(err)
+			}
+			if err := contracts.ValidateRuntimeEventSequence(got); err != nil {
+				t.Fatal(err)
+			}
+			if got[len(got)-1].Type != tc.terminal {
+				t.Fatalf("terminal = %s, want %s", got[len(got)-1].Type, tc.terminal)
+			}
+			if tc.heading == "" {
+				if _, err := os.Stat(paths.Outputs); !os.IsNotExist(err) {
+					t.Fatalf("failure copied outputs: %v", err)
+				}
+				return
+			}
 			html, err := os.ReadFile(filepath.Join(paths.Outputs, "report", "index.html"))
-			if err != nil || !strings.Contains(string(html), tc.heading) { t.Fatalf("HTML = %s, error %v", html, err) }
-			manifest, err := os.ReadFile(filepath.Join(paths.Outputs, "artifact-manifest.json")); if err != nil { t.Fatal(err) }
-			_, err = contracts.ParseArtifactManifest(manifest)
-			if (err != nil) != tc.invalid { t.Fatalf("manifest error %v, invalid %v", err, tc.invalid) }
+			if err != nil || !strings.Contains(string(html), tc.heading) {
+				t.Fatalf("HTML = %s, error %v", html, err)
+			}
+			manifest, err := os.ReadFile(filepath.Join(paths.Outputs, "artifact-manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := contracts.ParseArtifactManifest(manifest)
+			if (err != nil) != tc.invalid {
+				t.Fatalf("manifest error %v, invalid %v", err, tc.invalid)
+			}
+			if !tc.invalid && !reflect.DeepEqual(parsed.Artifacts, got[len(got)-1].Payload.(contracts.AgentCompletedPayload).Artifacts) {
+				t.Fatal("completed artifacts differ from manifest")
+			}
 		})
 	}
 }
 
 func TestFakeScenarioRejectsUnknownSelector(t *testing.T) {
 	for _, prompt := range []string{"[fixture:unknown]", "[fixture:../geo-report]", "[fixture:geo-report"} {
-		p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime")); if err != nil { t.Fatal(err) }
-		id := uuid.New(); paths := localPaths(t.TempDir(), id)
-		lease, _ := p.Acquire(context.Background(), AcquireRequest{RunID:id, Paths:paths})
-		r := fakeRequest(id, paths); r.Prompt = prompt
+		p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := uuid.New()
+		paths := localPaths(t.TempDir(), id)
+		lease, _ := p.Acquire(context.Background(), AcquireRequest{RunID: id, Paths: paths})
+		r := fakeRequest(id, paths)
+		r.Prompt = prompt
 		events, errs := lease.Runtime().Execute(context.Background(), r)
-		for event := range events { t.Errorf("unknown selector emitted %s", event.Type) }
-		if err := <-errs; !errors.Is(err, agentexec.ErrInvalid) { t.Errorf("%s error = %v", prompt, err) }
+		for event := range events {
+			t.Errorf("unknown selector emitted %s", event.Type)
+		}
+		if err := <-errs; !errors.Is(err, agentexec.ErrInvalid) {
+			t.Errorf("%s error = %v", prompt, err)
+		}
 	}
 }
 
 func TestFakeScenarioDelayedAndBlockingCancellation(t *testing.T) {
 	for _, name := range []string{"delayed-success", "blocking"} {
 		t.Run(name, func(t *testing.T) {
-			p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime")); if err != nil { t.Fatal(err) }
-			id := uuid.New(); paths := localPaths(t.TempDir(), id)
-			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second); defer cancel()
-			lease, _ := p.Acquire(ctx, AcquireRequest{RunID:id, Paths:paths})
-			r := fakeRequest(id, paths); r.Prompt = "[fixture:"+name+"]"
+			p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			waits := make(chan time.Duration)
+			p.wait = func(ctx context.Context, delay time.Duration) error {
+				select {
+				case waits <- delay:
+					return ctx.Err()
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			id := uuid.New()
+			paths := localPaths(t.TempDir(), id)
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			lease, _ := p.Acquire(ctx, AcquireRequest{RunID: id, Paths: paths})
+			r := fakeRequest(id, paths)
+			r.Prompt = "[fixture:" + name + "]"
 			events, errs := lease.Runtime().Execute(ctx, r)
 			if name == "delayed-success" {
-				<-events; started := time.Now(); <-events
-				if time.Since(started) < time.Second { t.Error("missing 1000ms inter-event delay") }
+				<-events
+				if delay := <-waits; delay != time.Second {
+					t.Fatalf("delay = %v", delay)
+				}
+				<-events
 			} else {
 				for event := range events {
-					if contracts.IsTerminalEvent(event) { t.Fatal("blocking emitted terminal without cancellation") }
-					if event.Type == "artifact.candidate" { break }
+					if contracts.IsTerminalEvent(event) {
+						t.Fatal("blocking emitted terminal without cancellation")
+					}
+					if delay := <-waits; delay != 50*time.Millisecond {
+						t.Fatalf("delay = %v", delay)
+					}
+					if event.Type == "artifact.candidate" {
+						break
+					}
 				}
-				select { case event := <-events: t.Fatalf("blocking released: %v", event); case <-time.After(150*time.Millisecond): }
+				select {
+				case event, open := <-events:
+					t.Fatalf("blocking released before cancellation: event=%v open=%v", event, open)
+				case <-time.After(50 * time.Millisecond):
+				}
 			}
 			cancel()
-			for event := range events { if contracts.IsTerminalEvent(event) { t.Fatal("terminal after cancellation") } }
-			if err := <-errs; !errors.Is(err, agentexec.ErrOutcomeUnknown) { t.Fatal(err) }
-			if err := lease.Runtime().Finalize(context.Background(), id, agentexec.Abort); err != nil { t.Fatal(err) }
+			for event := range events {
+				if contracts.IsTerminalEvent(event) {
+					t.Fatal("terminal after cancellation")
+				}
+			}
+			if err := <-errs; !errors.Is(err, agentexec.ErrOutcomeUnknown) {
+				t.Fatal(err)
+			}
+			if err := lease.Runtime().Finalize(context.Background(), id, agentexec.Abort); err != nil {
+				t.Fatal(err)
+			}
 		})
+	}
+}
+
+func TestFakeScenarioDelayedCompletesWithExactInterEventDelays(t *testing.T) {
+	p, err := NewFakeProvider(filepath.Join("..", "..", "..", "..", "tests", "fixtures", "fake-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delays []time.Duration
+	p.wait = func(_ context.Context, delay time.Duration) error { delays = append(delays, delay); return nil }
+	id := uuid.New()
+	paths := localPaths(t.TempDir(), id)
+	lease, err := p.Acquire(context.Background(), AcquireRequest{RunID: id, Paths: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := fakeRequest(id, paths)
+	r.Prompt = "[fixture:delayed-success]"
+	events, errs := lease.Runtime().Execute(context.Background(), r)
+	var got []agentexec.Event
+	for event := range events {
+		got = append(got, event)
+	}
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if len(delays) != len(got)-1 {
+		t.Fatalf("%d waits for %d events", len(delays), len(got))
+	}
+	for _, delay := range delays {
+		if delay != time.Second {
+			t.Fatalf("delay = %v", delay)
+		}
+	}
+	if err := contracts.ValidateRuntimeEventSequence(got); err != nil {
+		t.Fatal(err)
+	}
+	if got[len(got)-1].Type != "agent.completed" {
+		t.Fatal("not completed")
+	}
+}
+
+func TestFakeWaitCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitFakeEvent(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
 	}
 }
 

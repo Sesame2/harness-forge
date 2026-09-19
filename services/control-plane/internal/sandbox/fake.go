@@ -3,9 +3,11 @@ package sandbox
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,11 +19,39 @@ import (
 type FakeProvider struct {
 	mu         sync.Mutex
 	root       string
-	events     []agentexec.Event
+	wait       func(context.Context, time.Duration) error
 	leases     map[agentexec.RunID]*fakeLease
 	executions map[agentexec.RunID]*fakeExecution
 	sessions   map[agentexec.SessionID]bool
 }
+type fakeScenario struct {
+	Version         uint    `json:"version"`
+	BaseFixture     string  `json:"base_fixture"`
+	EventDelayMS    uint    `json:"event_delay_ms"`
+	BlockBeforeType *string `json:"block_before_type"`
+	Release         string  `json:"release"`
+	events          []agentexec.Event
+}
+
+func fixtureName(name string) bool {
+	switch name {
+	case "geo-report", "success-v2", "agent-failure", "invalid-manifest", "delayed-success", "blocking":
+		return true
+	}
+	return false
+}
+
+func waitFakeEvent(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 type fakeExecution struct {
 	record   agentexec.Execution
 	decision agentexec.Decision
@@ -43,7 +73,24 @@ func (l *fakeLease) Release(context.Context) error {
 }
 
 func NewFakeProvider(root string) (*FakeProvider, error) {
-	file, err := os.Open(filepath.Join(root, "geo-report", "events.ndjson"))
+	p := &FakeProvider{root: root, wait: waitFakeEvent, leases: map[agentexec.RunID]*fakeLease{}, executions: map[agentexec.RunID]*fakeExecution{}, sessions: map[agentexec.SessionID]bool{}}
+	if _, err := p.scenario("geo-report"); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (p *FakeProvider) scenario(name string) (*fakeScenario, error) {
+	var scenario fakeScenario
+	data, err := os.ReadFile(filepath.Join(p.root, name, "scenario.json"))
+	if err != nil {
+		return nil, &Error{Operation: "configure", Provider: Fake, Kind: ErrUnavailable}
+	}
+	if json.Unmarshal(data, &scenario) != nil || scenario.Version != 1 || !fixtureName(scenario.BaseFixture) || scenario.EventDelayMS > uint((1<<63-1)/int64(time.Millisecond)) ||
+		!((scenario.Release == "none" && scenario.BlockBeforeType == nil) || (scenario.Release == "context_cancel" && scenario.BlockBeforeType != nil && *scenario.BlockBeforeType == "agent.completed")) {
+		return nil, &Error{Operation: "configure", Provider: Fake, Kind: ErrConflict}
+	}
+	file, err := os.Open(filepath.Join(p.root, scenario.BaseFixture, "events.ndjson"))
 	if err != nil {
 		return nil, &Error{Operation: "configure", Provider: Fake, Kind: ErrUnavailable}
 	}
@@ -62,7 +109,8 @@ func NewFakeProvider(root string) (*FakeProvider, error) {
 	if scanner.Err() != nil || !terminal || contracts.ValidateRuntimeEventSequence(events) != nil {
 		return nil, &Error{Operation: "configure", Provider: Fake, Kind: ErrConflict}
 	}
-	return &FakeProvider{root: root, events: events, leases: map[agentexec.RunID]*fakeLease{}, executions: map[agentexec.RunID]*fakeExecution{}, sessions: map[agentexec.SessionID]bool{}}, nil
+	scenario.events = events
+	return &scenario, nil
 }
 func (p *FakeProvider) Acquire(ctx context.Context, r AcquireRequest) (Lease, error) {
 	if err := ctx.Err(); err != nil {
@@ -119,6 +167,20 @@ func (e *fakeExecutor) Execute(ctx context.Context, r agentexec.ExecuteRequest) 
 			failure(err)
 			return
 		}
+		name := "geo-report"
+		if strings.HasPrefix(r.Prompt, "[fixture:") {
+			var found bool
+			name, _, found = strings.Cut(strings.TrimPrefix(r.Prompt, "[fixture:"), "]")
+			if !found || !fixtureName(name) {
+				failure(agentexec.ErrInvalid)
+				return
+			}
+		}
+		scenario, err := p.scenario(name)
+		if err != nil {
+			failure(agentexec.ErrUnavailable)
+			return
+		}
 		p.mu.Lock()
 		if old := p.executions[r.RunID]; old != nil {
 			decision := old.decision
@@ -159,12 +221,25 @@ func (e *fakeExecutor) Execute(ctx context.Context, r agentexec.ExecuteRequest) 
 			close(record.done)
 			p.mu.Unlock()
 		}()
-		for _, fixtureEvent := range p.events {
+		for i, fixtureEvent := range scenario.events {
+			if i > 0 && scenario.EventDelayMS > 0 {
+				if err := p.wait(executionCtx, time.Duration(scenario.EventDelayMS)*time.Millisecond); err != nil {
+					failure(agentexec.ErrOutcomeUnknown)
+					return
+				}
+			}
+			if scenario.BlockBeforeType != nil && fixtureEvent.Type == *scenario.BlockBeforeType {
+				<-executionCtx.Done()
+			}
+			if executionCtx.Err() != nil {
+				failure(agentexec.ErrOutcomeUnknown)
+				return
+			}
 			event := fixtureEvent
 			event.RunID = r.RunID.String()
 			event.OccurredAt = time.Now().UTC()
 			if event.Type == "agent.completed" {
-				if err := os.CopyFS(r.Paths.Outputs, os.DirFS(filepath.Join(p.root, "geo-report", "outputs"))); err != nil {
+				if err := os.CopyFS(r.Paths.Outputs, os.DirFS(filepath.Join(p.root, scenario.BaseFixture, "outputs"))); err != nil {
 					failure(agentexec.ErrUnavailable)
 					return
 				}
