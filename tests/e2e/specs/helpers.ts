@@ -51,7 +51,7 @@ export async function report(page: Page, heading = 'Geographic report') {
   await expect(page.frameLocator('#artifact-pane iframe').getByRole('heading', { name: heading, exact: true })).toBeVisible()
   const frame = await page.locator('#artifact-pane iframe').elementHandle()
   const content = await frame!.contentFrame()
-  expect(await content!.evaluate(() => typeof (window as any).echarts)).toBe('object')
+  await expect.poll(() => content!.evaluate(() => typeof (window as any).echarts)).toBe('object')
   return (await page.locator('#artifact-pane iframe').getAttribute('src'))!
 }
 
