@@ -1572,7 +1572,7 @@ git commit -m "feat: browse immutable run artifacts"
 - Modify: `docker-compose.yaml`
 - Modify: `Makefile`
 
-- [ ] **Step 1: 先建立隔离 E2E harness 并确认基础绿色**
+- [x] **Step 1: 先建立隔离 E2E harness 并确认基础绿色**
 
 在 `tests/e2e` 执行并提交 lockfile：
 
@@ -1604,7 +1604,7 @@ test-e2e:
 
 Expected: env assertion 与 health spec PASS，证明 Compose 插值实际启用 Fake Provider；trap 清理 volumes。先证明 harness 可用，再增加行为红测。
 
-- [ ] **Step 2: 写 Fake scenario 和完整 E2E 失败测试**
+- [x] **Step 2: 写 Fake scenario 和完整 E2E 失败测试**
 
 Fake Provider 保留普通 prompt 默认 `geo-report`；测试前缀 `[fixture:<scenario>]` 选择 `geo-report|success-v2|agent-failure|invalid-manifest|delayed-success|blocking`。`scenario.json` schema 固定：`{version:1, base_fixture:string, event_delay_ms:uint, block_before_type:string|null, release:"none"|"context_cancel"}`。Delayed 固定 `{base_fixture:"geo-report",event_delay_ms:1000,block_before_type:null,release:"none"}`；blocking 固定 `{base_fixture:"geo-report",event_delay_ms:50,block_before_type:"agent.completed",release:"context_cancel"}`。Cancel context 只解除 blocking 且不得再发 terminal；其他业务 event 仍来自 V1 NDJSON。Go 测试覆盖 selector、outputs、第二版本、失败、无效 Manifest、精确 delay hook 和 cancel release；Docker Provider 的 HTTP Runtime 不解析测试前缀。
 
@@ -1619,7 +1619,7 @@ make test-e2e
 
 Expected: 两条命令分别 FAIL 于 selector 与 unknown scenario/第二版本/失败时序断言；E2E health spec 仍 PASS，不能是 connection refused。
 
-- [ ] **Step 3: 实现 Fake scenarios 并确认 adapter 绿色**
+- [x] **Step 3: 实现 Fake scenarios 并确认 adapter 绿色**
 
 实现上述 fixtures。成功 fixture HTML 引用同 prefix `report/vendor/echarts.min.js` 小型 stub并设置 `window.echarts`，用于证明 JS Content-Type + nosniff；真实 ECharts 由 Task 16 smoke 验证。
 
@@ -1627,13 +1627,13 @@ Run: `go -C services/control-plane test ./internal/sandbox -run 'FakeScenario' -
 
 Expected: PASS。
 
-- [ ] **Step 4: 运行完整 E2E 并确认绿色**
+- [x] **Step 4: 运行完整 E2E 并确认绿色**
 
 Run: `make test-e2e`
 
 Expected: 全部行为 specs PASS；`[fixture:*]` 产生确定性 Fake events/artifacts，间接证明没有调用 Docker Runtime 或真实 Claude；parent 与 `frame-ancestors` 都使用 `localhost:15173`，iframe 不被 CSP 阻止；失败保留 trace/screenshot，trap 始终清理。
 
-- [ ] **Step 5: 运行并提交 E2E**
+- [x] **Step 5: 运行并提交 E2E**
 
 ```bash
 make test-e2e
