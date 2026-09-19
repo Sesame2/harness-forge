@@ -82,7 +82,7 @@ docker-compose.yaml      本地服务编排
 
 ## 当前进度与恢复入口
 
-Task 1–21 已完成；Task 22 的中文交付文档和干净环境验收正在继续。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-09-19-final-tasks.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
+Task 1–21 已完成；Task 22 的中文文档、全量测试和同机 fresh clone 验收已完成，仅剩第二独立 Docker 环境验收。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-09-19-final-tasks.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
 
 - [实施计划](docs/superpowers/plans/2026-07-19-harness-forge-v0.md)
 

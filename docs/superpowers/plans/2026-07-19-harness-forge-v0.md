@@ -1646,6 +1646,8 @@ Expected: Playwright 全部 PASS，命令结束后 Compose 资源被清理。
 
 ### Task 22：文档、完整验证与交付检查
 
+> 2026-09-19：本地实现、两阶段审查、完整测试及同机 fresh clone 已通过，冻结代码版本 `c5962a5299264a5dee158f255606138b3a7d3b12`。Step 6 的第二独立环境尚未提供，因此 Task 22 保持未全部完成；验证证据见 [verification.md](../../development/verification.md)。
+
 **Files:**
 - Modify: `README.md`
 - Create: `docs/development/local-setup.md`
@@ -1656,15 +1658,15 @@ Expected: Playwright 全部 PASS，命令结束后 Compose 资源被清理。
 - Create: `docs/decisions/0001-postgres-and-s3-for-local-v0.md`
 - Modify: `Makefile`
 
-- [ ] **Step 1: 编写从零启动文档**
+- [x] **Step 1: 编写从零启动文档**
 
 README 和本 Task 新增文档全部使用中文，并链接中英文设计规格。README 包含前置条件、复制 `.env.example`、启动、创建 Geo Project、上传 fixture、测试、停止和清理；读者无需先读设计规格。
 
-- [ ] **Step 2: 编写排障、协议与 ADR**
+- [x] **Step 2: 编写排障、协议与 ADR**
 
 排障覆盖端口、MinIO bucket、migration、Provider 配置不匹配（必须用旧 Provider purge/reset 后才能切换）、Sandbox acquire/sync/release、Runtime unavailable、unfinalized Run、Session missing、孤儿对象、SSE 和 Claude credential。`sandbox-provider.md` 记录接口不变量、Docker/Fake 行为、Run lifecycle 顺序及未来 E2B adapter 的接入清单，并明确 V0 无 E2B 依赖、无通用 shell/filesystem API、无跨 Provider Session/历史迁移。ADR 只记录个人项目选择 PostgreSQL+S3 的不可直觉权衡，以及重新评估条件。
 
-- [ ] **Step 3: 运行完整验证**
+- [x] **Step 3: 运行完整验证**
 
 先把 `test-integration` 从 Task 4 的单 package target 扩为隔离全量 target：
 
@@ -1700,7 +1702,7 @@ git diff --check
 
 Expected: 所有测试 0 failure，Compose config 与 diff check exit 0。
 
-- [ ] **Step 4: 在干净环境验证启动**
+- [x] **Step 4: 在干净环境验证启动**
 
 ```bash
 set -eu
@@ -1719,7 +1721,7 @@ docker compose -f docker-compose.yaml -p "$project" ps
 
 Expected: 必需服务全部 healthy且 Control Plane 环境明确为 Fake；只清理 `harness-forge-clean-verify`，不删除开发者默认项目数据。README 人工 golden path 与 Task 21 自动路径字段一致。
 
-- [ ] **Step 5: 提交交付文档，形成可供干净环境检出的 commit**
+- [x] **Step 5: 提交交付文档，形成可供干净环境检出的 commit**
 
 ```bash
 git add README.md docs Makefile

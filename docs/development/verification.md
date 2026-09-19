@@ -2,7 +2,7 @@
 
 设计依据：[中文](../superpowers/specs/2026-07-19-harness-forge-design.zh-CN.md) / [English](../superpowers/specs/2026-07-19-harness-forge-design.md)。操作步骤见 [README](../../README.md) 与 [fresh clone 验收](local-setup.md#可复现的-fresh-clone-验收)。
 
-本页明确区分工作区验证、同机 fresh clone 和第二独立环境。Task 22 **尚未完成**；未执行的验收不能用既有单元测试或 health 代替。所有自动验证使用 Fake/测试替身，不调用 Claude；真实 Claude smoke 仍未运行。
+本页明确区分工作区验证、同机 fresh clone 和第二独立环境。代码、中文交付文档及本机完整验收已完成；Task 22 **仅剩第二独立环境验收，尚未全部完成**。所有自动验证使用 Fake/测试替身，不调用 Claude；真实 Claude smoke 仍未运行。
 
 ## 本地实现检查（2026-09-19）
 
@@ -16,24 +16,37 @@
 
 ## 冻结 commit 验收
 
-提交文档后填写完整 SHA，使用该 commit 在 fresh clone 和第二环境验证，最后另提交本页结果。最终记录提交可以不同于被验证 commit，但必须保留明确对应关系，不把未测试的新代码视为已验证。
+冻结 commit：`c5962a5299264a5dee158f255606138b3a7d3b12`。父级通过 `git clone --no-local` 新克隆并 detached checkout 此 commit，复制 `.env.example` 新建配置，按 README 安装依赖并执行验证。没有从原工作区复制 `.env`、node_modules、`.venv`、构建产物或卷；安装工具与 Docker 可复用本机下载/镜像缓存，因此这仍然只是同机验证。
+
+后续 `e81d060` 仅校正 README 的 Node 最低版本，本页与 checkpoint 后续提交只记录结果，不改变冻结版本的代码或测试。第二环境应检出上述完整 SHA，不用最新记录提交冒充已验收版本。
 
 | 记录项 | 同机 fresh clone | 第二独立 Docker 机器 / 干净 CI |
 | --- | --- | --- |
-| 冻结 commit（完整 SHA） | 待填写 | 待提供环境；必须同一 commit |
-| 日期、OS / architecture | 待填写 | 待填写 |
-| Docker / Compose 版本 | 待填写 | 待填写 |
-| `make verify-layout` | 待运行 | 待运行 |
-| `make test` | 待运行 | 待运行 |
-| `make test-integration` | 待运行 | 待运行 |
-| `make test-e2e` | 待运行 | 待运行 |
-| `pnpm --dir apps/web build` | 待运行 | 待运行 |
-| `docker compose -f docker-compose.yaml config --quiet` | 待运行 | 待运行 |
-| `git diff --check` | 待运行 | 待运行 |
-| README 浏览器 golden path | 待运行 | 待运行 |
-| 测试资源清理与标签复查 | 待运行 | 待运行 |
+| 冻结 commit（完整 SHA） | `c5962a5299264a5dee158f255606138b3a7d3b12` | 待提供环境；必须同一 commit |
+| 日期、OS / architecture | 2026-09-19；macOS 27.0（26A428）/ arm64 | 待填写 |
+| Docker / Compose 版本 | 29.4.0（arm64）/ 5.1.2 | 待填写 |
+| `make verify-layout` | PASS | 待运行 |
+| `make test` | PASS：Go 全包、Python 253、Vitest 108、Node 17 | 待运行 |
+| `make test-integration` | PASS；真实权限测试 0.49s，无 skip | 待运行 |
+| `make test-e2e` | PASS：5/5（23.2s） | 待运行 |
+| `pnpm --dir apps/web build` | PASS | 待运行 |
+| `docker compose -f docker-compose.yaml config --quiet` | PASS | 待运行 |
+| `git diff --check` | PASS；clone Git 状态干净 | 待运行 |
+| README 浏览器 golden path | PASS；下列 IDs，已检查页面截图 | 待运行 |
+| 测试资源清理与标签复查 | PASS；三个拥有的测试项目均无容器、卷、网络残留 | 待运行 |
 
-Golden path 记录：Project ID、Conversation ID、Run ID、primary Artifact ID 均待填写；需确认 CSV 上传、`[fixture:geo-report]`、Run `succeeded` 且 `finalized_at` 非空、HTML `Geographic report` 与工具步骤完成。只记录测试对象 ID，不记录 credential、环境变量转储或用户数据。
+宿主 Go 命令使用 `GOTOOLCHAIN=local env -u GOROOT` 绕过本机旧 GOROOT；其他工具版本同上。浏览器连接新建的 `harness-forge-clean-verify`（35173/38080/38081 等独立端口），真实操作创建项目、上传 CSV、新建会话、发送 `[fixture:geo-report]`，断言 Run `succeeded` 且 `finalized_at` 非空、工具步骤完成、主 HTML 显示、隔离 iframe 内 `window.echarts` 就绪，无 pageerror。
+
+- Project：`07201d91-cf43-4986-a722-f00a51886f86`
+- Conversation：`d083172f-bfcd-475c-8822-d67d6dd5070b`
+- Run：`cad4308a-59fd-430f-b424-9bfc798b458d`
+- Primary Artifact：`d87702a0-5796-4253-a192-cc06a0f47096`
+
+这些是已销毁测试卷中的历史证据，不是当前仍可访问的数据。浏览器验收由 Playwright 驱动真实 UI，执行代理另行查看截图确认显示结果，没有模拟业务 API，也不代表用户已亲自验收。
+
+额外隔离回归：将 `COMPOSE_ENV_FILES` 指向仅含测试内容的损坏 dotenv，普通 Compose config 如预期拒绝解析；在同一环境变量下完整 `make test-integration` 仍通过，包含真实权限测试和清理。验证了顶层与权限测试子进程均显式忽略外部 dotenv，而不是只检查 Make 文本。
+
+规格审查和最终质量审查已通过；修正了权限子进程 dotenv 隔离、Runtime 终态说明、容器 UID 范围及 Node 版本要求。尚未添加或触发 CI：第二环境/相关授权待用户提供，不能将以上同机结果计作第二环境。
 
 ## 自动测试隔离说明
 
