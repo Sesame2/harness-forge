@@ -23,7 +23,7 @@ Run 顺序是：准备并封存 inputs → 保存 acquire intent → Acquire →
 
 ## Docker 与 Fake
 
-Docker Provider 连接已由 Compose 启动的共享 Python Runtime；不是每 Run 一个容器。固定 ref 为 `docker:agent-runtime`，Acquire/Recover 检查健康和路径归属，List 从 Runtime 未 finalized executions 映射。Go 与 Runtime 共享 `run-workspaces` 卷，Runtime 路径为 `/workspaces/<run_id>/{inputs,workspace,outputs}`；当前 SyncBack/Release 是空操作。Runtime Session 使用独立 `runtime-sessions` 卷，应用容器 UID/GID 都为 `10001:10001`。这不是面向恶意代码的强租户隔离。
+Docker Provider 连接已由 Compose 启动的共享 Python Runtime；不是每 Run 一个容器。固定 ref 为 `docker:agent-runtime`，Acquire/Recover 检查健康和路径归属，List 从 Runtime 未 finalized executions 映射。Go 与 Runtime 共享 `run-workspaces` 卷，Runtime 路径为 `/workspaces/<run_id>/{inputs,workspace,outputs}`；当前 SyncBack/Release 是空操作。Runtime Session 使用独立 `runtime-sessions` 卷，Go 控制平面与 Python Runtime 容器的 UID/GID 都为 `10001:10001`。这不是面向恶意代码的强租户隔离。
 
 Fake Provider 完全在 Go 进程内回放 V1 fixture，ref 为 `fake:<run_id>`，完成事件前复制输出文件。它仍执行会话/Finalize 语义，但 Lease、execution 和 Session 记录在内存中；重启不提供远程持久恢复保证，不应作为长期会话存储。普通 prompt 默认 `geo-report`；开头的 `[fixture:<name>]` 仅在 Fake 有意义。
 

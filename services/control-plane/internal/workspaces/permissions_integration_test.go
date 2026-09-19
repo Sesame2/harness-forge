@@ -31,7 +31,7 @@ func TestComposeWorkspacePermissions(t *testing.T) {
 	defer cancel()
 	run := func(service, script string) {
 		t.Helper()
-		cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "-f", compose, "exec", "-T", service, "sh", "-ec", script)
+		cmd := exec.CommandContext(ctx, "docker", "compose", "--env-file", "/dev/null", "-p", project, "-f", compose, "exec", "-T", service, "sh", "-ec", script)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s permission proof: %v\n%s", service, err, output)
 		}
@@ -43,7 +43,7 @@ func TestComposeWorkspacePermissions(t *testing.T) {
 	root := "/workspaces/" + name
 	run("control-plane", `mkdir -m 0770 `+root+`; mkdir -m 0770 `+root+`/inputs `+root+`/workspace `+root+`/outputs; echo input > `+root+`/inputs/data; chmod 0440 `+root+`/inputs/data; chmod 0550 `+root+`/inputs; echo control > `+root+`/workspace/control; echo control > `+root+`/outputs/control`)
 	t.Cleanup(func() {
-		cmd := exec.Command("docker", "compose", "-p", project, "-f", compose, "exec", "-T", "control-plane", "sh", "-ec", `chmod 0770 `+root+`/inputs; rm -r `+root)
+		cmd := exec.Command("docker", "compose", "--env-file", "/dev/null", "-p", project, "-f", compose, "exec", "-T", "control-plane", "sh", "-ec", `chmod 0770 `+root+`/inputs; rm -r `+root)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Errorf("remove permission fixture: %v %s", err, out)
 		}

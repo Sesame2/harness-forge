@@ -25,7 +25,7 @@ Go HTTP adapter 对网络不可用、结果不确定、冲突、已 finalized �
 
 ## Session、制品与两阶段收尾
 
-Runtime lifecycle 为 `starting → running → awaiting_finalize`，它与 Go Run 的 `queued/running/succeeded/failed/cancelled/interrupted` 是两个状态模型。Python 持久化执行元数据及 Session，并在重启时将未收尾执行恢复到可对账状态；不在后台静默重跑模型。
+Runtime 未 finalized 的 lifecycle 为 `starting → running → awaiting_finalize`，Finalize 后持久化为 `committed` 或 `aborted`；`GET /v1/executions` 不返回这两个终态。它与 Go Run 的 `queued/running/succeeded/failed/cancelled/interrupted` 是两个状态模型。Python 持久化执行元数据及 Session，并在重启时将未收尾执行恢复到可对账状态；不在后台静默重跑模型。
 
 首次 Conversation 执行的 source 为 null。后续执行从该 Conversation 最近一次成功的 SDK Session fork；SDK adapter 使用 `resume=source`、`fork_session=true`，新 candidate 不得等于 source 或已有基线 Session。不同 Conversation 不共享 SDK Session；它们只共享 Project 的 Input Files。
 
