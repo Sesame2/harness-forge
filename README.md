@@ -32,6 +32,19 @@ docker compose -f docker-compose.yaml exec -T control-plane sh -ec 'test "$SANDB
 
 普通提示词也会走 Fake 默认报告。需要验证真实 Claude 时，另行阅读[人工 smoke 注意事项](docs/development/local-setup.md#真实-claude人工选择)，不要将 Fake 成功当作真实 SDK/API 验收。
 
+## 可选 OpenAI 兼容模式
+
+在根 `.env` 填写 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_CHAT_MODEL`、`OPENAI_RESPONSES_MODEL`，并执行 `chmod 600 .env`。每次启动显式选择一种协议；这些命令会访问真实上游，可能产生费用：
+
+```sh
+node scripts/openai.mjs check --api chat
+node scripts/openai.mjs check --api responses
+node scripts/openai.mjs dev --api chat
+# 另一个配置位置可加 --env-file /absolute/path/to/.env
+```
+
+`dev` 使用独立 `harness-forge-openai` 项目；原生 Claude 和默认 Compose 拓扑不变。网关没有宿主机端口，OpenAI key 只进入网关；Runtime 继续通过 Claude Agent SDK 调用它。不自动 fallback、不替换用户指定模型，不支持的语义明确报错。完整 smoke 命令、会话切换限制和费用边界见[本地开发](docs/development/local-setup.md#openai-双协议兼容模式)。当前两模式真实全流程验收仍在进行，连通性和离线合同通过不等于完整验收。
+
 ## 测试
 
 ```sh
@@ -67,6 +80,7 @@ SANDBOX_PROVIDER=fake ANTHROPIC_API_KEY='' ANTHROPIC_BASE_URL='' make purge-dele
 ```text
 services/control-plane/   Go API、调度、持久化、SandboxProvider、制品网关
 services/agent-runtime/   Python Claude Agent SDK 与 Runtime V1
+services/model-gateway/   可选固定版本 LiteLLM 网关与兼容性合同
 apps/web/                Vue 三栏工作台
 profiles/                应用 Profile（当前 geo-analysis）
 contracts/               OpenAPI 与版本化 JSON Schema
@@ -74,6 +88,7 @@ tests/                   Fake fixtures、浏览器 E2E
 infra/                   本地基础设施初始化
 docs/                    设计、实施、协议、开发与验收记录
 docker-compose.yaml      本地服务编排
+docker-compose.openai.yaml 可选 OpenAI 网关覆盖编排
 ```
 
 - [中文设计规格](docs/superpowers/specs/2026-07-19-harness-forge-design.zh-CN.md) / [English design specification](docs/superpowers/specs/2026-07-19-harness-forge-design.md)
@@ -82,8 +97,9 @@ docker-compose.yaml      本地服务编排
 
 ## 当前进度与恢复入口
 
-Task 1–21 已完成；Task 22 的中文文档、全量测试和同机 fresh clone 验收已完成，仅剩第二独立 Docker 环境验收。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-09-19-final-tasks.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
+原 V0 Task 1–22 已完成：同一冻结源码 `7db5334948a2f377bbf2d2dc9eed9a02a80d8d35` 已通过本机 fresh clone 与独立 Linux [CI 验收](https://github.com/Sesame2/harness-forge/actions/runs/36995155512)。新增 OpenAI 网关 Task 23–25 正在实施与验证，不属于该旧冻结快照的验收范围。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-10-02-openai-gateway.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
 
 - [实施计划](docs/superpowers/plans/2026-07-19-harness-forge-v0.md)
+- [OpenAI 网关中文规格](docs/superpowers/specs/2026-10-02-openai-gateway-design.md) / [实施计划](docs/superpowers/plans/2026-10-02-openai-gateway.md)
 
-三栏业务前端、Runtime、Geo Profile 与完整 Fake E2E 已完成；第二独立 Docker 环境验收仍待落实，尚不能宣称完整交付。真实 Claude smoke 保持人工 opt-in 且尚未运行。
+三栏业务前端、Runtime、Geo Profile 与完整 Fake E2E 已完成。真实原生 Claude smoke 保持人工 opt-in 且尚未运行；两种 OpenAI 模式的真实验收结果单独记录，不互相替代。

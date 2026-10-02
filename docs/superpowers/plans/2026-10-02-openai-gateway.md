@@ -62,12 +62,13 @@
   兼容模式关闭 native thinking/prompt caching/非必要网络调用，显式设置 SDK 模型别名。以模式/上游 URL/实际模型生成不包含 secret 的身份，隔离 Claude 配置目录。旧路由有未 finalize execution 时拒绝切换；旧 source 不存在时拒绝恢复。默认原生目录及权限策略不变；不触碰 Go Provider 接口或 Runtime wire contract。
   对旧行为的必要回归：当前路由 B 删除已完成路由 A 的 session 时，不能仅在 B 返回幂等 204 而遗留 A transcript。仅 DELETE 在原生根及受管指纹根复用 SessionStore；跨路由 busy、无目标时的 fsync 重试、unlink 后 fsync 失败重试和 symlink 拒绝均先 RED→GREEN，HEAD/续聊不跨路由。不要新增 SessionStore 抽象、数据库或 wire 字段。
   Runtime 子任务 24a 已通过独立规格/质量审查；父级完整复验 Python 288/288（5.04s）、Ruff、Mypy 13 源文件、diff check。实际 spawn 验证目录和 durable ACK；身份标记短写反例也已 RED→GREEN，写不完整时不替换旧 marker。此记录不覆盖后续 launcher 或真实模型。
-- [ ] **Step 3: 接线并测试安全配置加载。**
+- [x] **Step 3: 接线并测试安全配置加载。**
   launcher 从显式路径（默认仓库 `.env`）以 Node `parseEnv` 读取；不执行 dotenv 为 shell、不在命令行参数或 stdout 传 key。向 Compose child 传所需 env；OpenAI key 仅在 gateway service，SDK 为临时/本地 gateway key。覆盖 Compose 网关不暴露 host port；Runtime 仍使用 Docker Provider。先实现 `check`（双接口最小调用）、`dev` 和 `smoke` 明确子命令，`--api chat|responses` 控制部署模式；启动 smoke 前拒绝已有测试 project 资源，finally 只清理自己创建的资源。
-- [ ] **Step 4: GREEN 回归。**
+- [x] **Step 4: GREEN 回归。**
   `node --test scripts/openai.test.mjs`、`make test-python`、`make test-gateway`、`make test`；空 env 模板的 Compose config `--quiet` 成功，绝不打印真实渲染配置。验证空 key 时没有 Docker/HTTP 调用。
-- [ ] **Step 5: 规格/质量审查并提交。**
+- [x] **Step 5: 规格/质量审查并提交。**
   核对 parent/worker 一致性、启动恢复和取消不被破坏、未知模式 fail closed；提交 `feat: connect runtime to selectable OpenAI gateway`。
+  Task24a 已提交 `df394b8` 并同步 main；Task24b 独立规格/质量审查通过，父级 launcher 41/41（0.917s），默认完整测试（Python288/Vitest108/原 smoke17/纯网关9）及 build/layout/双模式空 env Compose 凭证隔离检查通过。审查发现固定 smoke project 的并发互删风险，已 RED→GREEN 改为每次随机独立项目名，保留固定端口和资源检查。此阶段没有真实网关模型调用；Task25 必须返回三次运行、两会话的 UUID 证据，旧单轮 smoke 不可冒充成功。
 
 ## Chunk 3: 真实全链路与交付
 

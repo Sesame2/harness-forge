@@ -1,4 +1,6 @@
-.PHONY: verify-layout dev down test test-go test-python test-web test-gateway-unit test-gateway test-integration test-e2e smoke-claude purge-deleted purge-deleted-dry-run
+.PHONY: verify-layout dev down test test-go test-python test-web test-openai test-gateway-unit test-gateway test-integration test-e2e smoke-claude openai-check dev-openai smoke-openai purge-deleted purge-deleted-dry-run
+
+ENV_FILE ?= .env
 
 verify-layout:
 	@test -f services/control-plane/go.mod
@@ -12,7 +14,21 @@ dev:
 down:
 	docker compose -f docker-compose.yaml down
 
-test: test-go test-python test-web test-gateway-unit
+test: test-go test-python test-web test-openai test-gateway-unit
+
+# Pure configuration and subprocess fixtures; no Docker daemon or paid API calls.
+test-openai:
+	node --test scripts/openai.test.mjs
+
+# Explicit opt-in only: API=chat or API=responses; never part of make test.
+openai-check:
+	node scripts/openai.mjs check --api "$(API)" --env-file "$(ENV_FILE)"
+
+dev-openai:
+	node scripts/openai.mjs dev --api "$(API)" --env-file "$(ENV_FILE)"
+
+smoke-openai:
+	node scripts/openai.mjs smoke --api "$(API)" --env-file "$(ENV_FILE)"
 
 test-gateway-unit:
 	python3 -m unittest discover -s services/model-gateway/tests -p test_capabilities.py -v

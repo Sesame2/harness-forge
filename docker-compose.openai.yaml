@@ -1,0 +1,37 @@
+# Optional: use scripts/openai.mjs to validate configuration before starting.
+services:
+  model-gateway:
+    build:
+      context: ./services/model-gateway
+    command: ["--config", "/app/gateway/config-${HF_GATEWAY_MODE:-chat}.yaml", "--port", "4000"]
+    environment:
+      HF_GATEWAY_MODE: ${HF_GATEWAY_MODE:-chat}
+      HF_GATEWAY_UPSTREAM_MODEL: ${HF_GATEWAY_UPSTREAM_MODEL:-openai/unconfigured}
+      HF_GATEWAY_KEY: ${HF_GATEWAY_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://unconfigured.invalid/v1}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=2)"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  agent-runtime:
+    environment:
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_BASE_URL: ""
+      HF_MODEL_BACKEND: ${HF_MODEL_BACKEND:-openai-chat}
+      HF_GATEWAY_URL: http://model-gateway:4000
+      HF_GATEWAY_KEY: ${HF_GATEWAY_KEY:-}
+      HF_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://unconfigured.invalid/v1}
+      HF_OPENAI_MODEL: ${HF_OPENAI_MODEL:-}
+    depends_on:
+      model-gateway:
+        condition: service_healthy
+
+  control-plane:
+    environment:
+      SANDBOX_PROVIDER: docker
+    depends_on:
+      agent-runtime:
+        condition: service_healthy

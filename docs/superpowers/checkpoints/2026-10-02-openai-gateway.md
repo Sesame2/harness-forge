@@ -18,6 +18,7 @@
 - `c85695f`：成熟方案调研及已审查中文规格；`317921d`：已审查实施计划。
 - `2acd55be1d59c422d4b7e7fa2250937d202ddd04`：同 SHA 双环境 V0 验收与后续 Runtime 安全要求已同步 main/远端，主目录干净；新增网关及 Runtime 工作继续在既有实施工作树。
 - `529a11a94d0693442b6d3edd8ee1ecef0689bbce`：严格双协议网关及真实 mock 合同已提交并同步 main/远端。代码质量审查已通过；system 分块格式边界仍单独记录为待答复。
+- `df394b836d1e9c51af5ae99ca46ef2d0ff7e03b7`：模型后端身份及 Runtime 会话隔离已提交并同步 main/远端。
 - 新任务执行入口：[OpenAI 网关计划 Task23–25](../plans/2026-10-02-openai-gateway.md)。用户已批准，不重复询问两个协议或兼容范围。
 
 ## 本轮 V0 新鲜本机验证
@@ -62,7 +63,9 @@
 - Task24a Runtime 实现已通过独立规格和质量审查，父级完整复验 Python 288/288（5.04s）、Ruff、Mypy 13 源文件和 diff check。配置为 `HF_MODEL_BACKEND`、`HF_GATEWAY_URL/KEY`、`HF_OPENAI_BASE_URL/MODEL`；`CLAUDE_CONFIG_DIR` 始终是原始根，普通 property 派生 `.harness-backends/<sha256>`，密钥轮换不改变目录。
 - 已以实际 spawn/子进程 ACK 验证父进程、worker 与 SDK 使用同一路径，并验证兼容模式清理继承凭证、显式 SDK 参数和直接 settings 注入的 gateway key 脱敏。native 默认不变；启动在 recover 前检查路由标记，有未 finalize execution 时禁止切换。跨路由 purge 的忙碌、无目标 fsync、删除后 fsync 重试、失踪已枚举目录和 symlink 均明确失败或按合同完成。
 - 质量审查另用真实 `RLIMIT_FSIZE=32` 复现 64 字节身份标记短写却成功替换；已补最小长度检查及真实短写回归，失败保留旧 marker、清理临时文件。没有新增存储抽象或 wire 字段。
-- Task24b 部署 launcher、可选 Compose overlay、env 模板和中文操作说明正在收口；尚须独立审查与整体验证。Task25 两协议真实 UI/Agent/工具/制品闭环尚未运行。真实 key 已准备，不需用户再次提供。
+- Task24b 部署 launcher、可选 Compose overlay、env 模板和中文操作说明已通过独立规格/质量审查；父级 launcher 41/41（0.917s）、完整默认测试（Python288/Vitest108/原 smoke17/网关纯9）、build/layout/diff check、空 env Compose 及两模式假凭证隔离检查通过。OpenAI key 仅进入 gateway，browser 子进程没有模型凭证，生产 gateway 无 host port。真实 key 已准备，不需用户再次提供。
+- 审查复现同时启动同协议 smoke 时固定项目名会互删卷；已使用每次 24 位随机后缀项目名，实际 launcher 边界并发测试 RED→GREEN，启动与 finally 清理绑定同一 own project。端口仍固定，冲突时明确失败但不能清理其他运行。dev 项目保持稳定。
+- Task25 正在扩展既有 runSmoke 的 fullUI 模式，尚未运行两协议真实 UI/Agent/工具/制品闭环。launcher 已有三 Run/两会话 UUID 证据门，不接受旧单轮函数的 undefined 结果；下一步先完成离线编排测试和审查，再显式读取主目录 .env 运行 Chat、Responses。
 - 固定 SDK 为 0.2.120，bundled CLI 2.1.211。无凭证、禁止外网的本地 mock 探针证实：显式 `model=harness-openai`、`thinking={type: disabled}` 配合 `DISABLE_PROMPT_CACHING=1`、`CLAUDE_CODE_EFFORT_LEVEL=unset`、`DISABLE_INTERLEAVED_THINKING=1` 可发出不含 thinking/output_config/cache_control 的真实请求；仅关闭 thinking 仍会携带默认 effort，不能省略对应 env。上述配置已由 Task24a 接入。
 - 固定 CLI 只读审计所需的 `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`、`CLAUDE_CODE_MAX_RETRIES=0`、`CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1`、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 及 cache/effort/interleaved thinking/实验 beta 关闭配置均已接入；Haiku/Sonnet/Opus alias 为 `harness-openai`，不设置 Fable alias。兼容 spawn 先清除继承的 `ANTHROPIC_*`、`CLAUDE_CODE_*`、`OPENAI_*` 再注入明确环境。普通 retry 关闭不等于总 HTTP 只调用一次：独立 stream/watchdog 仍可能重试，真实 smoke 仍需 120s/max_turns/输出界限。
 - 原审计复现的旧 A 路由 transcript 在切到 B 后 DELETE 虚假返回 204 的问题，已由 Task24a 修复并通过回归；仅 DELETE 跨路由，HEAD、续聊、finalize 仍只访问当前 active 根，busy 或 fsync 失败继续 fail closed。
