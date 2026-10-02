@@ -11,7 +11,9 @@
 
 ## 方案选择
 
-选用固定版本 LiteLLM v1.103.2 的 Anthropic Messages 转换器，使用其正式 pre-call hook 添加窄范围能力检查，不自行实现协议转换。
+选用固定版本 LiteLLM v1.103.2 的 Anthropic Messages 转换器，使用其正式 `custom_auth(request, api_key)` 入口读取未经清洗的请求并检查能力，不信任 pre-call 中已清洗的 body 快照，不自行实现协议转换。
+
+真实固定镜像合同测试发现：未知 Chat finish_reason 被映射为 end_turn，损坏的 Responses 工具 JSON 被替换为 `{}`。用户已明确批准维护固定版本的最小错误处理补丁，将这类吞错改为显式失败。补丁保留成熟转换器的映射逻辑，严格匹配源版本/上下文，构建时不匹配即失败；真实网关回归必须从 RED 转 GREEN，不维护另一套转换器。
 
 比较：Bifrost 支持显式双路由，但其 reasoning strip-and-retry 尚无已核实的关闭方式；Claude Code Router / CLIProxyAPI 等也有静默去字段及额外部署行为。LiteLLM 同样不是无损保证，必须通过本项目合同测试后才可接真实工作流。
 

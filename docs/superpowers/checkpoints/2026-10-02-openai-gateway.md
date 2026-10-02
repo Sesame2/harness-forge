@@ -38,16 +38,20 @@
 - 环境初始化、locked dependency 安装、layout、全部 unit、Web build 成功。
 - `make test-integration` 在镜像拉取阶段即失败：`quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` 返回 `unauthorized`；尚未启动集成用例。
 - Fake 浏览器 E2E 未运行；always 资源清理检查通过。
-- 正在核查官方固定版本镜像是否仍有可验证的公开分发。不允许换另一版本后仍称冻结版本全部验收通过，也不把本机镜像缓存成功冒充干净 CI 成功。
+- 官方同版 Quay/Docker Hub 镜像已不可公开获取，历史 amd64/arm64 二进制与校验附件均为 410。已在 `4ec613721a00a89c5ef145dc61a7915644c6c23d` 改为同 release 固定官方 source SHA 构建 MinIO/mc，基础镜像 digest 固定，保留版本和许可证；不使用第三方镜像，也不声称与原 OCI 镜像逐字节一致。
+- 新构建在 arm64 完成，容器 `--version` 确认 release/source SHA；工作区 Fake E2E 5/5（19.9s）。发现 integration 可复用旧 Go test 结果缓存，已加入 `-count=1` 后重新实际运行全部集成用例成功，权限测试 0.46s，无 skip。
+- 新冻结 SHA 的本机 fresh clone 与独立 CI 正在重新执行。上述工作区结果尚不能计作两环境验收通过。
 
 Task22 Step6/7 及最终独立环境验收暂不勾选。原有计划 Task1–5 的历史 checkbox 尚未同步，但九月 checkpoint 和本轮只读审计均确认实现已完成，不应重新实现。
 
 ## 新网关当前进度
 
 - 成熟方案研究完成：LiteLLM/Bifrost/CCR/CLIProxyAPI/CC Switch/RelayKit；[中文研究记录](../../research/2026-10-02-anthropic-openai-compatibility.md) 含固定源码、实际丢字段/重试风险和验收闸门。
-- 采用 LiteLLM v1.103.2，每部署明确选一种协议，窄 raw-request guard；不自写转换器，不修改 SandboxProvider。
+- 采用 LiteLLM v1.103.2，每部署明确选一种协议，窄 raw-request guard；不自写转换器，不修改 SandboxProvider。官方镜像 digest 为 `sha256:f63fb81b831b170ec16851e23c36ac5bf52ef106b271406429524a2ed730bbfd`。
+- 真实固定转换器→mock 证实未知 Chat finish 被当成功、损坏 Responses 工具 JSON 被替换成 `{}`。用户明确批准固定版本最小错误处理补丁，保留成熟映射；原始源码 hash 和 patch 上下文漂移即构建失败。该批准已同步规格/计划，两个原始反例已 GREEN，其他流式/错误合同仍在补齐。
+- raw-request 必须从正式 custom_auth 的 FastAPI Request 读取；pre-call 的 proxy_server_request.body 已经被清洗，不能作为原始白名单信任边界。
 - 规格与计划独立审查通过。Task23 实施中：先真实固定转换器→本地 mock 合同、能力拒绝与错误语义，尚未宣称完成。
 - Task24 Runtime/部署配置、Task25 两协议真实 UI/Agent/工具/制品闭环尚待后续执行。真实 key 已准备，不需用户再次提供。
-- 固定 SDK 为 0.2.120，bundled CLI 2.1.211；需要验证实际请求 shape、关闭 prompt cache/thinking 的有效配置。不要直接假设滚动官网的新 CLI 开关在固定版本可用。
+- 固定 SDK 为 0.2.120，bundled CLI 2.1.211。无凭证、禁止外网的本地 mock 探针证实：显式 `model=harness-openai`、`thinking={type: disabled}` 配合 `DISABLE_PROMPT_CACHING=1`、`CLAUDE_CODE_EFFORT_LEVEL=unset`、`DISABLE_INTERLEAVED_THINKING=1` 可发出不含 thinking/output_config/cache_control 的真实请求；仅关闭 thinking 仍会携带默认 effort，不能省略对应 env。Task24 尚待接入。
 
 恢复时先检查 Git 与运行中测试资源，读取上述计划/规格和最新 checkpoint。继续解决既有 CI 镜像分发问题与 Task23 合同闸门；不把尚未执行的测试记录为 PASS。

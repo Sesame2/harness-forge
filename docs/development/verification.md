@@ -4,6 +4,8 @@
 
 本页明确区分工作区验证、同机 fresh clone 和第二独立环境。代码、中文交付文档及本机完整验收已完成；Task 22 **仅剩第二独立环境验收，尚未全部完成**。所有自动验证使用 Fake/测试替身，不调用 Claude；真实 Claude smoke 仍未运行。
 
+2026-10-02 更新：首次独立 CI 因旧 MinIO 镜像停止公开分发而失败。已从同版本官方固定源码构建新镜像，并重新冻结为 `4ec613721a00a89c5ef145dc61a7915644c6c23d`；本机 fresh clone / CI 正在对该新 SHA 重新验收。下文九月记录仍为历史证据，最新执行进度见 [十月 checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)。
+
 ## 本地实现检查（2026-09-19）
 
 - 起始 commit：`68724ff`；此处结果针对随后 Task 22 的工作区变更，不冒充冻结 commit 的重验。
@@ -46,12 +48,12 @@
 
 额外隔离回归：将 `COMPOSE_ENV_FILES` 指向仅含测试内容的损坏 dotenv，普通 Compose config 如预期拒绝解析；在同一环境变量下完整 `make test-integration` 仍通过，包含真实权限测试和清理。验证了顶层与权限测试子进程均显式忽略外部 dotenv，而不是只检查 Make 文本。
 
-规格审查和最终质量审查已通过；修正了权限子进程 dotenv 隔离、Runtime 终态说明、容器 UID 范围及 Node 版本要求。尚未添加或触发 CI：第二环境/相关授权待用户提供，不能将以上同机结果计作第二环境。
+规格审查和最终质量审查已通过；修正了权限子进程 dotenv 隔离、Runtime 终态说明、容器 UID 范围及 Node 版本要求。截至九月记录时尚未添加或触发 CI，不能将以上同机结果计作第二环境；十月新进度见页首说明。
 
 ## 自动测试隔离说明
 
 Integration 项目 `harness-forge-integration` 使用宿主端口 28080/28081/28090/25432/29000/29001；E2E 项目 `harness-forge-e2e` 使用 15173/18080/18081/18090/15432/19000/19001。它们忽略 `.env`，显式固定内部数据库/对象存储/Runtime 连接、共享路径与空 Claude credential。命名项目已有资源时立即拒绝，不自动接管；正常退出和测试失败都只删除本次拥有的项目卷。
 
-Integration 使用 `go test -p 1 -tags=integration ./internal/... -v`：跨 package 共享数据库级维护锁，所以按 package 串行，不削弱测试内部并发断言。`TEST_MINIO_ENDPOINT` 含 `http://`；`HF_PERMISSIONS_INTEGRATION=1` 与 `HF_COMPOSE_PROJECT` 确保两容器真实权限测试启用。
+Integration 使用 `go test -count=1 -p 1 -tags=integration ./internal/... -v`：禁用 Go 测试结果缓存，确保外部服务改变后实际重跑；仍可复用编译和镜像缓存。跨 package 共享数据库级维护锁，所以按 package 串行，不削弱测试内部并发断言。`TEST_MINIO_ENDPOINT` 含 `http://`；`HF_PERMISSIONS_INTEGRATION=1` 与 `HF_COMPOSE_PROJECT` 确保两容器真实权限测试启用。
 
 Fake E2E 的本地图表 stub 只验证脚本传输及执行。Python SDK 替身测试、Runtime 镜像启动与 Fake 浏览器 PASS 均不代表真实 Claude API 已验收。

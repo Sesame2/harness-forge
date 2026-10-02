@@ -4,7 +4,7 @@
 
 **Goal:** 在不替换 Claude Agent SDK、Go SandboxProvider 或现有 UI 的前提下，增加明确失败而非静默降级的 OpenAI Chat/Responses 模式，并完成两种模式的真实应用闭环。
 
-**Architecture:** 可选 LiteLLM v1.103.2 服务负责成熟协议转换，窄 callback 仅检查原始请求能力。每次部署只选择一种出站协议；Runtime 的模型配置和会话目录跟随固定路由身份，原生 Claude 默认不变。测试先使用真实转换器和本地 mock 上游，再使用用户已授权的真实配置。
+**Architecture:** 可选 LiteLLM v1.103.2 服务负责成熟协议转换，正式 custom_auth 入口仅检查真实原始请求能力。用户已批准对实证的吞错路径维护最小固定版本补丁，不重写映射逻辑。每次部署只选择一种出站协议；Runtime 的模型配置和会话目录跟随固定路由身份，原生 Claude 默认不变。测试先使用真实转换器和本地 mock 上游，再使用用户已授权的真实配置。
 
 **Tech Stack:** 既有 Go / Python 3.12 / Vue / Docker Compose / Node；固定 LiteLLM，Python stdlib unittest 与已有 pytest/Playwright。不上新数据库、管理 UI 或路由框架。
 
@@ -17,7 +17,7 @@
 - 复用 `.worktrees/v0-implementation`；主目录 `.env` 已有真实 key，禁止读取后打印、提交、复制进镜像或测试快照。只有显式 live 命令可加载该文件。
 - 每个实现任务先 RED→GREEN，再做规格和质量审查。一次只有一个代码实施者，其他 agent 可并行只读审查；父级独立复验。
 - 若固定转换器合同不成立，先给出最小反例；可以拒绝不支持的请求形状，不可维护另一套转换器、静默改参数或换协议/模型来过测试。
-- 不改变旧 `make test` / integration / Fake E2E 的无付费请求边界。原 Task22 CI 固定旧应用 SHA，不能冒充新网关 CI 验收。
+- 不改变旧 `make test` / integration / Fake E2E 的无付费请求边界。原 Task22 CI 固定应用 SHA（MinIO 分发修复后重新冻结），不能冒充新网关 CI 验收。
 
 ## Chunk 1: 成熟转换器合同与严格入口
 
@@ -26,7 +26,7 @@
 **Files:**
 - Create: `services/model-gateway/Dockerfile`（只扩展固定官方镜像，复制配置/窄 hook）。
 - Create: `services/model-gateway/config-chat.yaml`、`config-responses.yaml`（每部署固定一种模式）。
-- Create: `services/model-gateway/capabilities.py`（纯能力校验）、`callback.py`（正式 LiteLLM hook 接口）。
+- Create: `services/model-gateway/capabilities.py`（纯能力校验）、`callback.py`（正式 custom_auth 接口）、`strict-errors.patch`（固定版最小错误处理补丁）。
 - Create: `services/model-gateway/tests/test_capabilities.py`、`test_contract.py`（标准库测试，真实网关对本地 HTTP mock）。
 - Modify: `Makefile`（`test-gateway` 显式离线合同目标；默认 test 加无网络纯校验即可）。
 
@@ -36,10 +36,10 @@
 - [ ] **Step 2: 使用固定官方发布并记录可复现镜像身份。**
   核验 `ghcr.io/berriai/litellm:v1.103.2` manifest/digest/目标架构；不使用 latest/main。配置只含用户指定模型、`openai/` provider、API base/key 的环境引用。Chat 配置启用全局强制 Chat；Responses 不启用。重试为 0，不启 affinity/fallback/polyfill/drop_params，Responses 使用 `store=false`。
 - [ ] **Step 3: 先写能力白名单失败测试，再实现窄 hook。**
-  纯函数接口 `validate_request(body: dict, mode: str) -> None`，非法输入抛安全 `ValueError`；hook 转为明确 4xx。确认 hook 从可信原请求快照取值，不能把 LiteLLM 内部注入字段当用户字段，也不能让用户伪造内部字段绕过校验。
+  纯函数接口 `validate_request(body: dict, mode: str) -> None`，非法输入抛安全 `ValueError`；正式 custom_auth 入口从 Request 取未经清洗的 JSON，常量时间校验网关 key 并检查允许路径，再返回 UserAPIKeyAuth；失败明确 4xx。不能信任 pre-call 内已经清洗的 proxy_server_request.body，不能让用户伪造内部字段绕过校验。
   允许明确关闭的 thinking、普通文本/成功工具和 schema；未知语义字段/块、原生 thinking/signature/cache、image/document/server tool、is_error=true、无法等价参数及会重排的混合形状拒绝，且 mock 请求计数仍为 0。错误不包含值、key、原始请求。
 - [ ] **Step 4: 运行并补齐真实转换器合同。**
-  验证空白文本/顺序、多个 call ID/嵌套 JSON、成功结果回填、usage 来源、finish reason、SSE 顺序；拒绝坏 JSON/未知终态/半截流，401/429/5xx/超时/断开不可成功。Responses opaque reasoning 的工具轮次回放逐字段检查，`invalid_encrypted_content` 不得删字段后重试；不可支持则明确失败，不能让生产返回丢内容的成功。
+  验证空白文本/顺序、多个 call ID/嵌套 JSON、成功结果回填、usage 来源、finish reason、SSE 顺序；拒绝坏 JSON/未知终态/半截流，401/429/5xx/超时/断开不可成功。已实证的未知 finish→end_turn、坏 JSON→{} 允许以最小固定版本补丁改为明确异常，不改变正常映射；patch 上下文或源版本漂移即构建失败，两个反例必须GREEN。Responses opaque reasoning 的工具轮次回放逐字段检查，`invalid_encrypted_content` 不得删字段后重试；不可支持则明确失败，不能让生产返回丢内容的成功。
   测试网关仅收到内网访问 key，上游只收到 fake OpenAI key；保留 `count_tokens` 不可用错误。`make test-gateway` 必须退出 0 并清理自有临时容器/网络/端口。
 - [ ] **Step 5: 审查与提交。**
   审查固定配置、未知字段信任边界及合同是否真经过网关。`git diff --check`，提交 `feat: add fail-closed OpenAI protocol gateway`。不含真实凭证。
