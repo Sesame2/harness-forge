@@ -28,7 +28,7 @@ jobs:
       - name: Check out frozen application
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: 4ec613721a00a89c5ef145dc61a7915644c6c23d
+          ref: 7db5334948a2f377bbf2d2dc9eed9a02a80d8d35
           persist-credentials: false
 
       - name: Set up Go
@@ -55,7 +55,7 @@ jobs:
 
       - name: Record checked-out SHA and runner environment
         run: |
-          test "$(git rev-parse HEAD)" = 4ec613721a00a89c5ef145dc61a7915644c6c23d
+          test "$(git rev-parse HEAD)" = 7db5334948a2f377bbf2d2dc9eed9a02a80d8d35
           git rev-parse HEAD
           date -u '+%Y-%m-%dT%H:%M:%SZ'
           uname -srm

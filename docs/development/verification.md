@@ -4,7 +4,7 @@
 
 本页明确区分工作区验证、同机 fresh clone 和第二独立环境。代码、中文交付文档及本机完整验收已完成；Task 22 **仅剩第二独立环境验收，尚未全部完成**。所有自动验证使用 Fake/测试替身，不调用 Claude；真实 Claude smoke 仍未运行。
 
-2026-10-02 更新：首次独立 CI 因旧 MinIO 镜像停止公开分发而失败。已从同版本官方固定源码构建新镜像，并重新冻结为 `4ec613721a00a89c5ef145dc61a7915644c6c23d`；本机 fresh clone / CI 正在对该新 SHA 重新验收。下文九月记录仍为历史证据，最新执行进度见 [十月 checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)。
+2026-10-02 更新：首次独立 CI 因旧 MinIO 镜像停止公开分发而失败。同版本固定官方源码新镜像的 `4ec6137` 已通过本机完整 fresh clone 与独立 CI integration，但 CI Web build 暴露未固定 pnpm 的漂移。修复并重新冻结为 `7db5334948a2f377bbf2d2dc9eed9a02a80d8d35`，尚待此 SHA 的完整两环境验证。下文九月记录仍为历史证据，最新执行进度见 [十月 checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)。
 
 ## 本地实现检查（2026-09-19）
 

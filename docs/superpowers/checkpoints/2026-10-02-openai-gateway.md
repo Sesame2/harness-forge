@@ -40,9 +40,11 @@
 - Fake 浏览器 E2E 未运行；always 资源清理检查通过。
 - 官方同版 Quay/Docker Hub 镜像已不可公开获取，历史 amd64/arm64 二进制与校验附件均为 410。已在 `4ec613721a00a89c5ef145dc61a7915644c6c23d` 改为同 release 固定官方 source SHA 构建 MinIO/mc，基础镜像 digest 固定，保留版本和许可证；不使用第三方镜像，也不声称与原 OCI 镜像逐字节一致。
 - 新构建在 arm64 完成，容器 `--version` 确认 release/source SHA；工作区 Fake E2E 5/5（19.9s）。发现 integration 可复用旧 Go test 结果缓存，已加入 `-count=1` 后重新实际运行全部集成用例成功，权限测试 0.46s，无 skip。
-- 新冻结 SHA 的本机 fresh clone 与独立 CI 正在重新执行。上述工作区结果尚不能计作两环境验收通过。
+- `4ec6137` 的本机 fresh clone 完整 PASS（Python253、Vitest108、Node17；真实 integration 权限0.48s；Fake E2E5/5，21.5s；build/layout/config/Git clean/资源清理）；另在独立新卷完成真实 UI golden path，父级已查看截图。临时 clone 为 `/private/tmp/harness-forge-accept-4ec6137-20261002`，未复制真实配置或依赖目录；仍可复用本机下载/镜像缓存，不计作独立机器。
+- 第二次 CI [36994212247](https://github.com/Sesame2/harness-forge/actions/runs/36994212247) 对 `4ec6137` 的真实 PostgreSQL/MinIO integration **PASS**，包括 amd64 源码镜像构建；随后 E2E 在 Web 镜像构建阶段失败，浏览器尚未启动：未声明 packageManager 使 Corepack 选择滚动 pnpm12.8.1，固定 Node 镜像的旧 Corepack 找不到其 `bin/pnpm.cjs`。
+- `7db5334948a2f377bbf2d2dc9eed9a02a80d8d35` 只为两个 JS package 固定已验证的 `pnpm@9.15.4`，不改依赖/lock。规格、质量审查通过；本机 Web `docker build --no-cache` 成功，`--network none` 确认容器 pnpm9.15.4，E2E frozen install 成功。CI 再冻结到此 SHA；新完整两环境验收尚未通过。
 
-Task22 Step6/7 及最终独立环境验收暂不勾选。原有计划 Task1–5 的历史 checkbox 尚未同步，但九月 checkpoint 和本轮只读审计均确认实现已完成，不应重新实现。
+Task22 Step6/7 及最终独立环境验收暂不勾选。原有计划 Task1–5 的历史 checkbox 已按九月 checkpoint 和实现提交补齐，标明历史证据，不是本轮重做 RED。
 
 ## 新网关当前进度
 

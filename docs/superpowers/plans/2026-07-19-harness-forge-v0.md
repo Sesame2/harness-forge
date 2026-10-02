@@ -35,6 +35,8 @@
 | `apps/web/src/features/*` | 按 Project、Conversation、Chat、Run、Artifact 切分的 UI 功能 |
 | `tests/e2e/` | 使用 Fake Runtime 的完整用户链路 |
 
+> 历史状态同步（2026-10-02）：Task 1–5 已在既有开发中完成，见 [Task 5 checkpoint](../checkpoints/2026-09-12-task-5.md) 与 [Task 6 checkpoint](../checkpoints/2026-09-12-task-6.md)。对应实现提交为 `0154b6d`、`d6c2bf8`、`e70f248`、`f1444f3`、`dccab8e`，Task 5 审查修复止于 `d94f5d2`。下列勾选只回填历史遗漏，不表示本轮重做实现或重新观察了历史 RED；当时的验证及环境限制以 checkpoint 为准。
+
 ## Chunk 1：工程底座与可运行骨架
 
 ### Task 1：初始化三个语言模块与根命令
@@ -53,13 +55,13 @@
 - Create: `apps/web/pnpm-lock.yaml`
 - Modify: `.gitignore`
 
-- [ ] **Step 1: 记录失败的布局验证**
+- [x] **Step 1: 记录失败的布局验证**
 
 Run: `make verify-layout`
 
 Expected: FAIL，提示 `No rule to make target 'verify-layout'`。
 
-- [ ] **Step 2: 初始化并锁定依赖**
+- [x] **Step 2: 初始化并锁定依赖**
 
 ```bash
 mkdir -p services/control-plane/cmd/harness-forge
@@ -83,7 +85,7 @@ cd ../..
 
 保留 `go.sum`、`services/agent-runtime/uv.lock` 与 `pnpm-lock.yaml`，不手写浮动依赖。
 
-- [ ] **Step 3: 创建最小入口和合法 Compose 文件**
+- [x] **Step 3: 创建最小入口和合法 Compose 文件**
 
 `services/control-plane/cmd/harness-forge/main.go`：
 
@@ -100,7 +102,7 @@ name: harness-forge
 services: {}
 ```
 
-- [ ] **Step 4: 实现根 Makefile 最小命令**
+- [x] **Step 4: 实现根 Makefile 最小命令**
 
 ```make
 .PHONY: verify-layout dev down test test-go test-python test-web test-integration test-e2e smoke-claude purge-deleted
@@ -129,7 +131,7 @@ test-web:
 	cd apps/web && pnpm test -- --run
 ```
 
-- [ ] **Step 5: 增加环境示例和忽略项**
+- [x] **Step 5: 增加环境示例和忽略项**
 
 `.env.example`：
 
@@ -146,7 +148,7 @@ ANTHROPIC_BASE_URL=
 
 `.gitignore` 增加 `.venv/`、`node_modules/`、`dist/`、`.data/`、Playwright 输出和 Python cache。
 
-- [ ] **Step 6: 验证并提交工程骨架**
+- [x] **Step 6: 验证并提交工程骨架**
 
 ```bash
 make verify-layout
@@ -179,7 +181,7 @@ Expected: 验证命令 exit 0，提交只包含本 Task 文件。
 - Modify: `services/control-plane/go.mod`
 - Modify: `services/control-plane/go.sum`
 
-- [ ] **Step 1: 写失败的跨语言 fixture 测试**
+- [x] **Step 1: 写失败的跨语言 fixture 测试**
 
 先添加用于测试 JSON Schema 与 OpenAPI 的依赖：
 
@@ -202,7 +204,7 @@ func TestRuntimeEventFixture(t *testing.T) {
 
 Python 测试逐行调用 `RuntimeEvent.model_validate_json`，并用 `RunRequest`、`ArtifactManifest` 解析另外两个 fixture。另增加 unknown event fixture，证明 envelope 可解析但不会被当成 terminal event。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go -C services/control-plane test ./internal/contracts -v
@@ -211,7 +213,7 @@ cd services/agent-runtime && uv run pytest tests/test_contract_fixtures.py -v
 
 Expected: FAIL，fixture loader 或 model 未定义。
 
-- [ ] **Step 3: 实现完整 Run Request schema**
+- [x] **Step 3: 实现完整 Run Request schema**
 
 `run-request.schema.json` 必须要求：
 
@@ -231,7 +233,7 @@ Expected: FAIL，fixture loader 或 model 未定义。
 
 所有 ID 使用 UUID format，容器路径要求绝对路径，prompt 非空，`source_sdk_session_id` 可空，profile digest/config 与 limits 必须存在；禁止未知顶层字段。
 
-- [ ] **Step 4: 实现前向兼容 V1 event envelope**
+- [x] **Step 4: 实现前向兼容 V1 event envelope**
 
 ```json
 {
@@ -259,7 +261,7 @@ Expected: FAIL，fixture loader 或 model 未定义。
 
 `ArtifactCandidate` 固定字段为 `{name,title,type,entry,primary}`，其中 `type` 仅允许 `html|markdown|image|data`，其余含义和限制与 Manifest item 相同；Manifest item 使用相同 enum。`agent.completed.artifacts` 必须与最后一个 `artifact.candidate.artifacts` 一致；没有可发布制品时两者均为空数组。`runtime-events.ndjson` 至少各含一条八种已知事件，合同测试逐条验证 typed payload 的正例和“缺少必填字段/错误类型/未知 Artifact type”的反例。只有已知 `agent.completed/agent.failed` 能结束 Agent execution。
 
-- [ ] **Step 5: 实现 Manifest schema 和完整 Browser OpenAPI**
+- [x] **Step 5: 实现 Manifest schema 和完整 Browser OpenAPI**
 
 Manifest 要求 `schema_version: 1`、唯一非空 `name`、相对 `entry`、最多一个 primary。JSON Schema 能限制结构和路径形状；“唯一 name/最多一个 primary”由 contracts 测试中的语义 validator 验证。
 
@@ -296,7 +298,7 @@ OpenAPI 版本使用 3.1.0；所有对象 `additionalProperties: false`，下表
 
 Request components 精确定义为 `CreateProject{name,profile_id}`、`RenameProject{name}`、`CreateConversation{title?}`、`RenameConversation{title}`、`SubmitMessage{content}`，字符串 trim 后非空（可选初始 title 除外）。列表 response 是对应 component 的 JSON array，不增加分页 envelope。所有 mutation 的 400/404/409/413 使用统一 Error。SSE operation 描述恢复优先级：同时提供时 `Last-Event-ID` 优先，返回 frame 的 `id` 等于 durable sequence。Go 测试用 `openapi3.Loader` 加载、执行 `Validate`，并逐项断言上表 operation/status/media type、每个 component 的 required/nullability 和 `$ref` 关系存在。
 
-- [ ] **Step 6: 验证所有协议及反例并提交**
+- [x] **Step 6: 验证所有协议及反例并提交**
 
 ```bash
 go -C services/control-plane test ./internal/contracts -v
@@ -329,14 +331,14 @@ git commit -m "feat: define versioned Harness contracts"
 - Create: `apps/web/src/app/health.test.ts`
 - Modify: `apps/web/vite.config.ts`
 
-- [ ] **Step 1: 写配置和三个 health 失败测试**
+- [x] **Step 1: 写配置和三个 health 失败测试**
 
 - Go 配置测试使用注入的 `getenv`，覆盖：完整变量映射、`HTTP_ADDR=:8080`/`ARTIFACT_ADDR=:8081` 默认值、`SANDBOX_PROVIDER=docker|fake`（默认 `docker`）、Docker 模式缺少 `RUNTIME_URL`、缺少 `DATABASE_URL`/MinIO 凭证的具名错误、非法 `WEB_ORIGIN` URL。不得接受尚未实现的 `e2b` 值。
 - Go `GET /health` 期望 `200 {"status":"ok"}`。
 - Python `GET /health` 期望 `200 {"status":"ok","active_run_id":null}`。
 - Web `loadHealth()` 固定请求同源 `/health`，对非 2xx 抛出带 status 的错误；测试断言请求 URL。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go -C services/control-plane test ./internal/config ./internal/httpapi -v
@@ -344,7 +346,7 @@ cd services/agent-runtime && uv run pytest tests/test_health.py -v
 cd ../../apps/web && pnpm test -- --run src/app/health.test.ts
 ```
 
-- [ ] **Step 3: 实现配置、handler 与 Compose**
+- [x] **Step 3: 实现配置、handler 与 Compose**
 
 Go 使用 `ConfigFromEnv(getenv func(string) string) (Config, error)`，字段固定为 `HTTPAddr`、`ArtifactAddr`、`DatabaseURL`、`MinIOEndpoint`、`MinIOAccessKey`、`MinIOSecretKey`、`MinIOBucket`、`SandboxProvider`、`RuntimeURL`、`WorkspaceRoot`、`WebOrigin`。`WorkspaceRoot` 默认 `/workspaces`；`RuntimeURL` 是 Docker Provider 专属配置，不得传入 Run Coordinator。`httpapi.NewRouter()` 注册 `/health`，`main.go` 加载配置并在 `HTTPAddr` 启动 HTTP server。Python 使用 FastAPI application factory，容器入口固定为：
 
@@ -386,7 +388,7 @@ mc mb --ignore-existing "local/$MINIO_BUCKET"
 
 `.env.example` 补全 `DATABASE_URL`、`MINIO_ENDPOINT`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`、`SANDBOX_PROVIDER=docker`、`RUNTIME_URL`、`WORKSPACE_ROOT=/workspaces`、`WEB_ORIGIN`。Compose 必须用 `${SANDBOX_PROVIDER:-docker}` 插值而不是固定字面值，允许测试显式覆盖为 Fake。只有 Runtime 接收 Claude 变量；只有 Go 接收 PostgreSQL/MinIO 变量。命名 volumes 为 `postgres-data`、`minio-data`、`run-workspaces`、`runtime-sessions`。
 
-- [ ] **Step 4: 验证并提交服务拓扑**
+- [x] **Step 4: 验证并提交服务拓扑**
 
 ```bash
 docker compose -f docker-compose.yaml config --quiet
@@ -416,7 +418,7 @@ Expected: Go、Runtime 及经 Web 同源代理访问的 health 均返回 `status
 - Modify: `services/control-plane/cmd/harness-forge/main.go`
 - Modify: `Makefile`
 
-- [ ] **Step 1: 写隔离且可重复的 migration 集成测试**
+- [x] **Step 1: 写隔离且可重复的 migration 集成测试**
 
 `testsupport.NewPostgresSchema(t, TEST_DATABASE_URL)` 为每个测试创建随机 schema、设置 `search_path`，并通过 `t.Cleanup` 删除 schema，避免复用本地数据库状态造成假阳性。测试对同一 schema 连续运行 migration 两次，断言 schema version 不增加，并检查以下不变量：
 
@@ -428,7 +430,7 @@ Expected: Go、Runtime 及经 Web 同源代理访问的 health 均返回 `status
 - Run status/phase 有 CHECK，`run_events(run_id, sequence)` 唯一；
 - 待运行队列存在以 `status, created_at` 开头的 FIFO 索引。
 
-- [ ] **Step 2: 启动测试数据库并确认失败**
+- [x] **Step 2: 启动测试数据库并确认失败**
 
 ```bash
 docker compose -f docker-compose.yaml up -d --wait postgres
@@ -437,7 +439,7 @@ TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harnes
 
 Expected: FAIL，migration runner 或表不存在。
 
-- [ ] **Step 3: 实现 schema、嵌入迁移与显式 runner**
+- [x] **Step 3: 实现 schema、嵌入迁移与显式 runner**
 
 创建设计规格中的七张表及上一步全部约束。状态使用 text + CHECK。`migrations/embed.go` 通过 `//go:embed *.sql` 暴露 migration FS；runner 以 advisory lock + schema version table 保证并发安全和幂等，并让测试可传入目标 schema。`main.go` 在监听端口前连接数据库并显式调用 migration，不在任何领域 package `init()` 中执行。
 
@@ -449,7 +451,7 @@ test-integration:
 	TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/harness_forge?sslmode=disable' go -C services/control-plane test -tags=integration ./internal/postgres -v
 ```
 
-- [ ] **Step 4: 验证并提交数据库底座**
+- [x] **Step 4: 验证并提交数据库底座**
 
 ```bash
 make test-integration
@@ -492,7 +494,7 @@ git commit -m "feat: add initial product database schema"
 - Modify: `services/control-plane/internal/httpapi/router.go`
 - Modify: `services/control-plane/cmd/harness-forge/main.go`
 
-- [ ] **Step 1: 写 Profile、Project、上传和删除保护的失败测试**
+- [x] **Step 1: 写 Profile、Project、上传和删除保护的失败测试**
 
 先执行 `go -C services/control-plane get gopkg.in/yaml.v3`。Profile resolver 测试覆盖：读取 `profile.yaml`/`system-prompt.md`/`workspace-template`、解析 ID/version/accepted input types/allowed Artifact types/agent limits，以及 Artifact `max_file_bytes=10485760`、`max_total_bytes=52428800`；覆盖不存在 ID、YAML 内 ID 与目录不一致，以及修改任一 config/prompt/template byte 都改变 digest。这两个 byte limit 是 immutable Profile snapshot 的必填字段，并随 ExecuteRequest 传给 Runtime。
 
@@ -500,7 +502,7 @@ Project 测试覆盖 `CreateProject` 将 resolver 返回的 `profile_id/profile_
 
 `store_integration_test.go` 首行为 `//go:build integration`，使用 Task 4 的随机 schema 夹具验证真实 PostgreSQL 查询、回滚和删除保护，不用 mock SQL。并发 race test 固定锁顺序为 Project row：上传先分配 Input ID 并把 object 直接写到规格最终 key，再在 transaction 中 `SELECT Project FOR UPDATE`、确认 `deleted_at IS NULL`、写 metadata；删除也先锁 Project row。若删除先提交，上传拒绝并删除这个精确 object key；若上传先提交，删除随后可见完整 Input，不得出现 deleted Project 的 late Input。
 
-- [ ] **Step 2: 运行目标测试确认失败**
+- [x] **Step 2: 运行目标测试确认失败**
 
 Run: `go -C services/control-plane test ./internal/profiles ./internal/projects ./internal/httpapi -run 'Profile|Project|InputFile' -v`
 
@@ -508,11 +510,11 @@ Run: `TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:5432/
 
 Expected: FAIL，service/handler 未定义。
 
-- [ ] **Step 3: 实现深 Project module、对象 seam 和真实 adapter**
+- [x] **Step 3: 实现深 Project module、对象 seam 和真实 adapter**
 
 调用方只使用 `CreateProject`、`ReadProject`、`RenameProject`、`ListProjects`、`UploadInput`、`ListInputs`、`DeleteProject`。Create 与 Upload 都经同一个 immutable Profile snapshot resolver；Upload 根据 Project 已固化版本解析，版本目录/配置已丢失时 fail closed。对象 `Store` 只含 `Put(key, reader, PutOptions{ContentType})`、`Open`、`Delete(key)`、`DeletePrefix`、`Stat`；MinIO adapter 用最终 `projects/{project_id}/inputs/{input_file_id}/{filename}` key，DB failure/deleted race 用 `Delete` 精确补偿，memory adapter 仅用于模块测试。不创建通用 Repository interface，`projects.Store` 是具体 pgx store。
 
-- [ ] **Step 4: 注册 handler、注入真实依赖并验证**
+- [x] **Step 4: 注册 handler、注入真实依赖并验证**
 
 在 router 注册 Task 2 OpenAPI 的 Project/Input 全部路由。`main.go` 创建 Profile resolver、pgx pool 和 MinIO client，将具体 `projects.Service` 注入 router；启动失败必须返回非零且不监听半初始化服务。
 
