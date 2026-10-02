@@ -1,0 +1,113 @@
+name: Verify frozen V0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SANDBOX_PROVIDER: fake
+  ANTHROPIC_API_KEY: ''
+  ANTHROPIC_BASE_URL: ''
+  ANTHROPIC_AUTH_TOKEN: ''
+  CLAUDE_CODE_OAUTH_TOKEN: ''
+  GOTOOLCHAIN: local
+  UV_PYTHON: '3.12.11'
+  UV_FROZEN: 'true'
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Same application commit as the recorded macOS fresh-clone acceptance.
+      - name: Check out frozen application
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: c5962a5299264a5dee158f255606138b3a7d3b12
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: '1.25.4'
+          cache: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24.11.1'
+          package-manager-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12.11'
+
+      - name: Install fixed package tools
+        run: |
+          npm install --global pnpm@9.15.4
+          python -m pip install uv==0.6.6
+
+      - name: Record checked-out SHA and runner environment
+        run: |
+          test "$(git rev-parse HEAD)" = c5962a5299264a5dee158f255606138b3a7d3b12
+          git rev-parse HEAD
+          date -u '+%Y-%m-%dT%H:%M:%SZ'
+          uname -srm
+          lsb_release -ds
+          docker version
+          docker compose version
+          go version
+          node --version
+          pnpm --version
+          python --version
+          uv --version
+
+      - name: Install locked application dependencies
+        run: |
+          go -C services/control-plane mod download
+          pnpm --dir apps/web install --frozen-lockfile
+          (cd services/agent-runtime && uv sync --frozen)
+          pnpm --dir tests/e2e install --frozen-lockfile
+          pnpm --dir tests/e2e exec playwright install --with-deps chromium
+
+      - name: Verify repository layout
+        run: make verify-layout
+
+      - name: Run offline Agent unit tests
+        run: make test
+
+      - name: Build Web
+        run: pnpm --dir apps/web build
+
+      - name: Run real PostgreSQL and MinIO integration tests
+        run: make test-integration
+
+      - name: Run Fake browser E2E
+        run: make test-e2e
+
+      - name: Validate Compose and unchanged application checkout
+        run: |
+          docker compose --env-file /dev/null -f docker-compose.yaml config --quiet
+          git diff --check
+          test -z "$(git status --porcelain)"
+
+      - name: Verify test resource cleanup
+        if: always()
+        run: |
+          for project in harness-forge-integration harness-forge-e2e; do
+            for resource in container volume network; do
+              flags=-q
+              if [ "$resource" = container ]; then flags=-aq; fi
+              remaining=$(docker "$resource" ls "$flags" --filter "label=com.docker.compose.project=$project")
+              if [ -n "$remaining" ]; then
+                printf 'Test resources remain for %s (%s): %s\n' "$project" "$resource" "$remaining" >&2
+                exit 1
+              fi
+            done
+          done
