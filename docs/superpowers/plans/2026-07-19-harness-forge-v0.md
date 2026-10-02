@@ -1648,7 +1648,7 @@ Expected: Playwright 全部 PASS，命令结束后 Compose 资源被清理。
 
 ### Task 22：文档、完整验证与交付检查
 
-> 2026-09-19：本地实现、两阶段审查、完整测试及同机 fresh clone 已通过，冻结代码版本 `c5962a5299264a5dee158f255606138b3a7d3b12`。Step 6 的第二独立环境尚未提供，因此 Task 22 保持未全部完成；验证证据见 [verification.md](../../development/verification.md)。
+> 2026-10-02：基础设施分发与 pnpm 漂移修复后，重新冻结 `7db5334948a2f377bbf2d2dc9eed9a02a80d8d35`。同机 fresh clone、独立 GitHub CI、真实 UI golden path 与截图检查均已通过，记录随独立文档提交同步主分支，Task 22 完成。历史失败和完整证据见 [verification.md](../../development/verification.md)。本项仅覆盖原 V0，不代表新增 OpenAI 网关或真实模型全流程已通过。
 
 **Files:**
 - Modify: `README.md`
@@ -1730,7 +1730,7 @@ git add README.md docs Makefile
 git commit -m "docs: document local V0 operation"
 ```
 
-- [ ] **Step 6: 在 fresh clone 和第二 Docker 环境执行 README golden path**
+- [x] **Step 6: 在 fresh clone 和第二 Docker 环境执行 README golden path**
 
 在临时目录 `git clone --no-local <repo-path> harness-forge-clean`，checkout 上一步 commit，不复制工作区构建产物、`.env`、volumes 或 node/python cache。先在 fresh clone 按 README 从 `.env.example` 创建 `.env`，逐条执行启动命令；再人工完成“创建 Geo Project → 上传 `tests/e2e/fixtures/locations.csv` → 创建 Conversation → 发送 `[fixture:geo-report]` → 等待 succeeded → 打开主 HTML Artifact”，记录 Project/Conversation/Run/Artifact ID。
 
@@ -1746,7 +1746,7 @@ docker compose -f docker-compose.yaml config --quiet
 
 `docs/development/verification.md` 记录 commit SHA、日期、OS/architecture、Docker/Compose 版本、上述命令结果和 golden-path IDs，不记录凭证。若没有第二环境，本 Task 不得勾选完成，不能用当前工作区 health 代替。
 
-- [ ] **Step 7: 提交验证记录并确认工作区干净**
+- [x] **Step 7: 提交验证记录并确认工作区干净**
 
 ```bash
 git add docs/development/verification.md
@@ -1756,16 +1756,18 @@ test -z "$(git status --porcelain)"
 
 ## 最终验收
 
-- [ ] `make dev` 能启动 PostgreSQL、MinIO、Go、Python Runtime 和 Vue。
-- [ ] 默认 `make test` 不访问 Claude API。
-- [ ] `make test-integration` 使用真实 PostgreSQL/MinIO 并通过。
-- [ ] `make test-e2e` 使用 Fake SandboxProvider 跑通完整用户链路。
-- [ ] `make smoke-claude` 仅在显式配置 credential 时运行。
-- [ ] 同一 Project 可创建多个独立 Conversation，并共享 Input File。
-- [ ] 成功 Run 使用 SDK Session fork + commit；失败 Run abort，不污染 active context。
-- [ ] Control Plane/Runtime 崩溃后先协调 execution，再启动 scheduler。
-- [ ] Docker 与 Fake 都通过同一 SandboxProvider contract；Run Coordinator 不导入 Docker/E2B 细节。
-- [ ] `finalized_at` 只在 Runtime disposition 和 Lease release 都完成后写入；release 失败不会重跑 Agent。
-- [ ] Artifact 只有已提交元数据时可见，HTML 在隔离 iframe 中展示。
-- [ ] 逻辑删除和 `purge-deleted` 满足幂等顺序。
-- [ ] Git 工作区干净，提交粒度与 Task 对齐。
+以下勾选针对冻结原 V0 的模块/合同、真实 PostgreSQL/MinIO 和 Fake 浏览器证据及其主分支交付。真实 Claude smoke 未运行；SDK 替身与 opt-in 门禁验证不代表真实模型验收。新增 OpenAI 网关 Task 23–25 另行跟踪，实施工作树中的后续任务变更不属于本次冻结 V0 验收。
+
+- [x] `make dev` 能启动 PostgreSQL、MinIO、Go、Python Runtime 和 Vue。
+- [x] 默认 `make test` 不访问 Claude API。
+- [x] `make test-integration` 使用真实 PostgreSQL/MinIO 并通过。
+- [x] `make test-e2e` 使用 Fake SandboxProvider 跑通完整用户链路。
+- [x] `make smoke-claude` 仅在显式配置 credential 时运行。
+- [x] 同一 Project 可创建多个独立 Conversation，并共享 Input File。
+- [x] 成功 Run 使用 SDK Session fork + commit；失败 Run abort，不污染 active context。
+- [x] Control Plane/Runtime 崩溃后先协调 execution，再启动 scheduler。
+- [x] Docker 与 Fake 都通过同一 SandboxProvider contract；Run Coordinator 不导入 Docker/E2B 细节。
+- [x] `finalized_at` 只在 Runtime disposition 和 Lease release 都完成后写入；release 失败不会重跑 Agent。
+- [x] Artifact 只有已提交元数据时可见，HTML 在隔离 iframe 中展示。
+- [x] 逻辑删除和 `purge-deleted` 满足幂等顺序。
+- [x] Git 工作区干净，提交粒度与 Task 对齐。

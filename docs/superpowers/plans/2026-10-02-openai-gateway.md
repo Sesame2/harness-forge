@@ -59,6 +59,7 @@
   测试两种模式显式模型/网关 env；纯配置缺 key/model、坏 URL、未知模式失败，根 URL 正确补 `/v1`，既有 prefix 不被重写。不用真实 env 文件。父级和 worker 必须用相同 session 路径，使用 processes.py 的真实 spawn 环境路径证明不会二次附加指纹。
 - [ ] **Step 2: 实现最小配置与会话归属。**
   兼容模式关闭 native thinking/prompt caching/非必要网络调用，显式设置 SDK 模型别名。以模式/上游 URL/实际模型生成不包含 secret 的身份，隔离 Claude 配置目录。旧路由有未 finalize execution 时拒绝切换；旧 source 不存在时拒绝恢复。默认原生目录及权限策略不变；不触碰 Go Provider 接口或 Runtime wire contract。
+  对旧行为的必要回归：当前路由 B 删除已完成路由 A 的 session 时，不能仅在 B 返回幂等 204 而遗留 A transcript。仅 DELETE 在原生根及受管指纹根复用 SessionStore；跨路由 busy、无目标时的 fsync 重试、unlink 后 fsync 失败重试和 symlink 拒绝均先 RED→GREEN，HEAD/续聊不跨路由。不要新增 SessionStore 抽象、数据库或 wire 字段。
 - [ ] **Step 3: 接线并测试安全配置加载。**
   launcher 从显式路径（默认仓库 `.env`）以 Node `parseEnv` 读取；不执行 dotenv 为 shell、不在命令行参数或 stdout 传 key。向 Compose child 传所需 env；OpenAI key 仅在 gateway service，SDK 为临时/本地 gateway key。覆盖 Compose 网关不暴露 host port；Runtime 仍使用 Docker Provider。先实现 `check`（双接口最小调用）、`dev` 和 `smoke` 明确子命令，`--api chat|responses` 控制部署模式；启动 smoke 前拒绝已有测试 project 资源，finally 只清理自己创建的资源。
 - [ ] **Step 4: GREEN 回归。**

@@ -36,6 +36,7 @@ Chat 模式打开 `use_chat_completions_url_for_anthropic_messages`，拒绝可�
 - OpenAI key 只进入网关，Agent Runtime 只得到网关访问凭证、地址和路由模型别名。默认测试不读取真实 `.env`，不接真实模型。
 - SDK 显式设置模型，并在兼容模式关闭 Anthropic prompt caching、native thinking 和无关网络流量；保留原有工具权限、隔离配置、fork/commit/abort。
 - 兼容模式的 Claude session 目录按协议、上游地址、模型的非秘密指纹隔离；父进程 SessionStore 与 runner/SDK 必须使用同一路径。恢复时找不到对应来源必须失败，不能跨路由静默续聊；原生 Claude 路径保持不变。切换部署模式不迁移原生或其他模型的 transcript；旧路由仍有未 finalize execution 时拒绝切换，不能在新目录接管旧候选的 commit/abort。
+- 目录隔离不能破坏原有 purge：HEAD/续聊/finalize 仍仅访问当前路由，但按 UUID 删除 session 必须覆盖原生和既有受管路由目录，复用 SessionStore 的安全扫描、幂等删除与 fsync。旧路由删除失败不能返回成功，否则 Go 硬删索引后会遗留 transcript；任何路由有目标且 Runtime 忙时仍拒绝删除。
 - 网关只在 Compose 内网开放；不得暴露到公网或把用户 key 写进生成的配置文件、镜像、日志、测试快照或 Git。
 
 ## 保真集合与失败策略
