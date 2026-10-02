@@ -18,7 +18,9 @@ services:
       retries: 20
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    build:
+      context: ./infra/minio
+      target: minio
     command: server /data --console-address :9001
     ports:
       - "${MINIO_PORT:-9000}:9000"
@@ -35,7 +37,9 @@ services:
       retries: 20
 
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    build:
+      context: ./infra/minio
+      target: mc
     entrypoint: ["/bin/sh", "/create-bucket.sh"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-harness_forge}

@@ -6,7 +6,7 @@
 
 ## 从零运行（无需 Claude 凭证）
 
-准备 Git、Make、Docker Engine 或 Docker Desktop/OrbStack 及 Docker Compose v2+。运行宿主机测试还需 Go 1.25+、Node.js 22.13+（22.x）或 24+、pnpm 9、Python 3.12 和 uv。锁文件与容器固定具体依赖；首次安装需要下载镜像、包和 Chromium。
+准备 Git、Make、Docker Engine 或 Docker Desktop/OrbStack 及 Docker Compose v2+。运行宿主机测试还需 Go 1.25+、Node.js 22.13+（22.x）或 24+、pnpm 9、Python 3.12 和 uv。锁文件与容器固定具体依赖；首次安装需要下载镜像、包和 Chromium，并从固定官方源码构建 MinIO/mc（原版本镜像已停止公开分发）。详见[镜像来源](docs/development/local-setup.md#基础设施镜像来源)。
 
 ```sh
 git clone git@github.com:Sesame2/harness-forge.git

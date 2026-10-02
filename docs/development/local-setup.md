@@ -18,6 +18,23 @@ Compose 读取当前仓库 `.env`，但同名 shell 环境变量优先；不要�
 
 ## 可复现的 fresh clone 验收
 
+### 基础设施镜像来源
+
+2026-10-02 干净 GitHub runner 无法拉取原先固定的 Quay MinIO 镜像；官方 Docker Hub 同版也不可公开获取，`dl.min.io` 对这两个版本的 amd64/arm64 二进制及校验附件均返回 410。MinIO 已转为 [source-only 分发](https://github.com/minio/minio#source-only-distribution)。本机旧镜像缓存仍可用不能证明 fresh clone 可运行。
+
+Compose 因此通过 [`infra/minio/Dockerfile`](../../infra/minio/Dockerfile) 的两个 target 构建同源码版本：
+
+| 组件 | 源码 release | 固定官方 commit |
+| --- | --- | --- |
+| MinIO | `RELEASE.2025-04-22T22-12-26Z` | [`0d7408fc9969caf07de6a8c3a84f9fbb10a6739e`](https://github.com/minio/minio/tree/0d7408fc9969caf07de6a8c3a84f9fbb10a6739e) |
+| mc | `RELEASE.2025-04-16T18-13-26Z` | [`b00526b153a31b36767991a4f5ce2cced435ee8e`](https://github.com/minio/mc/tree/b00526b153a31b36767991a4f5ce2cced435ee8e) |
+
+构建校验 source SHA，使用上游 ldflags 生成器、固定 release 时间和 Go module 校验和，base image 固定 digest，保留上游 LICENSE/CREDITS。分别为当前目标架构编译静态二进制；不使用失效的下载地址或第三方镜像。首次需要访问 GitHub、Go module 服务和基础镜像仓库，耗时比原来直接拉镜像更长；后续可复用本机构建缓存。
+
+这些是同源码版本的新镜像，不宣称与旧官方 OCI 镜像逐字节相同；此改动必须形成新冻结 SHA，并在本机 fresh clone 与独立 CI 重新验收。
+
+### 验收步骤
+
 冻结待验收 commit 后，在空临时目录执行 `git clone --no-local <本地仓库绝对路径> harness-forge-clean`，进入克隆并 `git checkout <完整 commit SHA>`。不要复制原工作区 `.env`、node_modules、`.venv`、构建产物、卷或缓存；用 `cp .env.example .env` 新建配置，再执行 README 的依赖安装命令。记录实际 commit 与工具版本。
 
 下面整段在克隆根目录的**子 shell**运行，使用独立 `harness-forge-clean-verify` 和全新卷。它显式覆盖所有服务连接、路径及空 Claude 凭证；按回车前可以在浏览器完成 README golden path。退出后仅清理本次拥有的验证项目。资源检查拒绝未知同名资源；不要删掉检查以强行继续。

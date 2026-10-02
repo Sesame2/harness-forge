@@ -80,7 +80,7 @@ test-integration:
 	  TEST_DATABASE_URL='postgres://harness_forge:local-dev-only@localhost:25432/harness_forge?sslmode=disable' \
 	  TEST_MINIO_ENDPOINT=http://localhost:29000 TEST_MINIO_ACCESS_KEY=harness_forge TEST_MINIO_SECRET_KEY=local-dev-only \
 	  HF_PERMISSIONS_INTEGRATION=1 HF_COMPOSE_PROJECT=$$project COMPOSE_PROJECT_NAME=$$project \
-	  go -C services/control-plane test -p 1 -tags=integration ./internal/... -v
+	  go -C services/control-plane test -count=1 -p 1 -tags=integration ./internal/... -v
 
 purge-deleted:
 	docker compose -f docker-compose.yaml build control-plane
