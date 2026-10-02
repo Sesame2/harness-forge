@@ -64,11 +64,14 @@ async def run_worker(
         # SDK/library diagnostics must never share the public NDJSON stream.
         with redirect_stdout(diagnostic):
             paths = validate_workspace(request, settings.run_workspace_root)
-            session_store = sessions or SessionStore(settings.claude_config_dir)
+            session_store = sessions or SessionStore(
+                settings.effective_claude_config_dir
+            )
             adapter = ClaudeAdapter(
-                claude_config_dir=settings.claude_config_dir,
+                claude_config_dir=settings.effective_claude_config_dir,
                 baseline_session_ids=baseline,
                 anthropic_base_url=os.environ.get("ANTHROPIC_BASE_URL"),
+                settings=settings,
             )
             async for event in adapter.stream_turn(request, on_candidate):
                 emit(event.type, event.payload)

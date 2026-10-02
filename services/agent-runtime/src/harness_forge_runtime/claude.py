@@ -24,6 +24,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import StreamEvent, ToolPermissionContext
 
 from harness_forge_runtime.models import PAYLOAD_MODELS, RunRequest
+from harness_forge_runtime.settings import RuntimeSettings
 
 
 class ClaudeAdapterError(Exception):
@@ -48,12 +49,14 @@ class ClaudeAdapter:
         claude_config_dir: Path,
         baseline_session_ids: tuple[str, ...],
         anthropic_base_url: str | None = None,
+        settings: RuntimeSettings | None = None,
     ) -> None:
         if not claude_config_dir.is_absolute():
             raise ValueError("Claude config directory must be absolute")
         self.config_dir = claude_config_dir
         self.baseline = frozenset(baseline_session_ids)
         self.base_url = anthropic_base_url
+        self.settings = settings
 
     async def stream_turn(
         self, request: RunRequest, on_candidate: Callable[[str], Awaitable[None]]
@@ -95,6 +98,29 @@ class ClaudeAdapter:
             env = {"CLAUDE_CONFIG_DIR": str(self.config_dir)}
             if self.base_url and self.base_url.strip():
                 env["ANTHROPIC_BASE_URL"] = self.base_url
+            backend_options: dict[str, Any] = {}
+            if self.settings is not None and self.settings.hf_model_backend != "native":
+                backend_options = {
+                    "model": "harness-openai",
+                    "thinking": {"type": "disabled"},
+                }
+                env.update(
+                    {
+                        "ANTHROPIC_BASE_URL": self.settings.hf_gateway_url,
+                        "ANTHROPIC_API_KEY": self.settings.hf_gateway_key,
+                        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "harness-openai",
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL": "harness-openai",
+                        "ANTHROPIC_DEFAULT_OPUS_MODEL": "harness-openai",
+                        "DISABLE_PROMPT_CACHING": "1",
+                        "DISABLE_INTERLEAVED_THINKING": "1",
+                        "CLAUDE_CODE_EFFORT_LEVEL": "unset",
+                        "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192",
+                        "CLAUDE_CODE_MAX_RETRIES": "0",
+                        "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
+                        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+                    }
+                )
             options = ClaudeAgentOptions(
                 cwd=request.paths.workspace,
                 resume=request.source_sdk_session_id,
@@ -112,6 +138,7 @@ class ClaudeAdapter:
                 max_budget_usd=request.limits.max_budget_usd,
                 include_partial_messages=True,
                 env=env,
+                **backend_options,
             )
             async for message in query(prompt=prompt(), options=options):
                 if isinstance(message, SystemMessage) and message.subtype == "init":

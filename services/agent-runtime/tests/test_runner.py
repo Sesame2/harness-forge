@@ -14,6 +14,7 @@ from harness_forge_runtime.models import RunPaths, RuntimeEvent
 from harness_forge_runtime.sessions import SessionStore
 from harness_forge_runtime.settings import RuntimeSettings
 from test_claude_adapter import request, result
+from test_backend import configured
 
 
 def runner_module():
@@ -205,3 +206,63 @@ async def test_worker_manifest_and_fork_use_real_normalization(tmp_path, monkeyp
         "artifacts": [artifact],
     }
     assert (old / f"{source}.jsonl").read_bytes() == b"source unchanged"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["openai-chat", "openai-responses"])
+async def test_gateway_worker_uses_effective_sessions_and_explicit_sdk_options(
+    tmp_path, monkeypatch, mode
+):
+    import harness_forge_runtime.claude as claude
+
+    turn, _ = fixture_run(tmp_path)
+    settings = configured(tmp_path, mode)
+    sdk = SessionStore(settings.effective_claude_config_dir)
+    bucket = sdk.prepare_run(turn.run_id, Path(turn.paths.workspace), None)
+    candidate = str(uuid4())
+    acknowledged = []
+    captured = []
+
+    async def query(*, prompt, options):
+        captured.append(options)
+        assert options.env["CLAUDE_CONFIG_DIR"] == str(
+            settings.effective_claude_config_dir
+        )
+        assert options.env["ANTHROPIC_API_KEY"] == "fixture-gateway-key"
+        assert options.env["ANTHROPIC_BASE_URL"] == "http://model-gateway:4000"
+        assert options.model == "harness-openai"
+        assert options.thinking == {"type": "disabled"}
+        assert options.env["DISABLE_PROMPT_CACHING"] == "1"
+        assert options.env["CLAUDE_CODE_EFFORT_LEVEL"] == "unset"
+        assert options.env["DISABLE_INTERLEAVED_THINKING"] == "1"
+        assert options.env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "8192"
+        assert options.env["CLAUDE_CODE_MAX_RETRIES"] == "0"
+        for name in (
+            "NONSTREAMING_FALLBACK",
+            "NONESSENTIAL_TRAFFIC",
+            "EXPERIMENTAL_BETAS",
+        ):
+            assert options.env[f"CLAUDE_CODE_DISABLE_{name}"] == "1"
+        for name in ("HAIKU", "SONNET", "OPUS"):
+            assert options.env[f"ANTHROPIC_DEFAULT_{name}_MODEL"] == "harness-openai"
+        assert "ANTHROPIC_DEFAULT_FABLE_MODEL" not in options.env
+        assert not any(key.startswith("OPENAI_") for key in options.env)
+        assert options.permission_mode == "default" and options.setting_sources == []
+        assert options.max_turns == 8 and options.max_budget_usd == 2.0
+        yield SystemMessage(subtype="init", data={"session_id": candidate})
+        (bucket / f"{candidate}.jsonl").write_text("opaque")
+        yield result(candidate)
+
+    async def control(kind, value):
+        acknowledged.append(kind)
+
+    monkeypatch.setattr(claude, "query", query)
+    output = io.StringIO()
+    assert (
+        await runner_module().run_worker(
+            turn, settings, (), control, stdout=output, stderr=io.StringIO()
+        )
+        == 0
+    )
+    assert captured and acknowledged == ["candidate.created", "candidate.durable"]
+    assert '"type":"agent.completed"' in output.getvalue()

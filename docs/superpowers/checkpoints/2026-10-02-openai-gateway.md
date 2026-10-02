@@ -17,6 +17,7 @@
 - `f7cfa91`：新增经规格与质量双审查的仅手动 Fake CI，已同步 main/远端。
 - `c85695f`：成熟方案调研及已审查中文规格；`317921d`：已审查实施计划。
 - `2acd55be1d59c422d4b7e7fa2250937d202ddd04`：同 SHA 双环境 V0 验收与后续 Runtime 安全要求已同步 main/远端，主目录干净；新增网关及 Runtime 工作继续在既有实施工作树。
+- `529a11a94d0693442b6d3edd8ee1ecef0689bbce`：严格双协议网关及真实 mock 合同已提交并同步 main/远端。代码质量审查已通过；system 分块格式边界仍单独记录为待答复。
 - 新任务执行入口：[OpenAI 网关计划 Task23–25](../plans/2026-10-02-openai-gateway.md)。用户已批准，不重复询问两个协议或兼容范围。
 
 ## 本轮 V0 新鲜本机验证
@@ -58,9 +59,12 @@
 - Task23 合同已经实现，父级最新独立 `make test-gateway` PASS：9 个纯校验测试、Chat/Responses 两套真实固定网关→本地 mock 合同（73.947s）；不是模型替身绕开转换器。覆盖出站协议/鉴权、system/text/工具/历史、流式 JSON、真实 usage、状态/坏输出/截断/错误脱敏、30s 超时及实际 socket 取消，合同容器已清理。该次 arm64 镜像 ID 为 `sha256:e43047224f54fb9b20108be64942b353bc9e82a394f3118d6644657378245b5c`；BuildKit attestation 会使重建的本地 index ID 改变，基底固定 digest 与源 hash 不变。
 - 质量复审以固定镜像无网络探针另发现 3 个转换后 hook 看不到的丢失：Chat 非流式自动补坏 JSON/空串→对象、`call.1` 与 `call:1` 均归一化为 `call_1`、音频伴随文本时音频被丢。已补真实 HTTP RED（7 项失败）→GREEN，复用 SDK 原始 Chat 解析前检查点统一拒绝；流式 JSON 分片、合法 `{}` 仍通过。
 - Responses reasoning 无法保留原 ID，明确拒绝所有 reasoning，不 strip-and-retry；`disable_parallel_tool_use` 亦明确拒绝。实际文本合同确认 Responses 的多个 system 文本块会插入换行连接，块内原字符串和次序不变；Chat assistant 多文本块直接连接。已异步询问用户是否接受这项显式格式规范化，尚未收到答复；不能写成整段字节不变。
-- Task24 Runtime 部分正在先测后实现：路由配置/指纹、启动前阻止跨路由恢复和跨路由 purge 已有 RED→GREEN；尚需 worker/SDK 接线、部署 launcher 和独立审查。Task25 两协议真实 UI/Agent/工具/制品闭环尚未运行。真实 key 已准备，不需用户再次提供。
-- 固定 SDK 为 0.2.120，bundled CLI 2.1.211。无凭证、禁止外网的本地 mock 探针证实：显式 `model=harness-openai`、`thinking={type: disabled}` 配合 `DISABLE_PROMPT_CACHING=1`、`CLAUDE_CODE_EFFORT_LEVEL=unset`、`DISABLE_INTERLEAVED_THINKING=1` 可发出不含 thinking/output_config/cache_control 的真实请求；仅关闭 thinking 仍会携带默认 effort，不能省略对应 env。Task24 尚待接入。
-- 已完成固定 CLI 只读静态审计：兼容模式还需显式 `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`、`CLAUDE_CODE_MAX_RETRIES=0`、`CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1`、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，加既有 cache/effort/interleaved thinking/实验 beta 关闭配置；Haiku/Sonnet/Opus alias 统一为 `harness-openai`，不设置会改变能力判断的 Fable alias。兼容 spawn 先清除继承的 `ANTHROPIC_*`、`CLAUDE_CODE_*`、`OPENAI_*`，再注入明确环境。普通 retry 关闭不等于总 HTTP 只调用一次：独立 stream/watchdog 仍可能重试，必须继续依靠 120s、max_turns、输出 token 界限。以上是 Task24 接入要求，尚未实现。
-- 已完成 Runtime 只读审计并实际复现：旧 A 路由 transcript 在切到 B 后，DELETE 返回 204 但旧文件遗留。父级已将必要 purge 回归加入新规格/计划的 Task24：仅 DELETE 枚举原生与受管指纹根并复用安全 SessionStore；HEAD、续聊、finalize 仍只访问当前 active 根，busy 或 fsync 失败继续 fail closed。此修复尚未实现，不得将新增回归要求记为通过。
+- Task24a Runtime 实现已通过独立规格和质量审查，父级完整复验 Python 288/288（5.04s）、Ruff、Mypy 13 源文件和 diff check。配置为 `HF_MODEL_BACKEND`、`HF_GATEWAY_URL/KEY`、`HF_OPENAI_BASE_URL/MODEL`；`CLAUDE_CONFIG_DIR` 始终是原始根，普通 property 派生 `.harness-backends/<sha256>`，密钥轮换不改变目录。
+- 已以实际 spawn/子进程 ACK 验证父进程、worker 与 SDK 使用同一路径，并验证兼容模式清理继承凭证、显式 SDK 参数和直接 settings 注入的 gateway key 脱敏。native 默认不变；启动在 recover 前检查路由标记，有未 finalize execution 时禁止切换。跨路由 purge 的忙碌、无目标 fsync、删除后 fsync 重试、失踪已枚举目录和 symlink 均明确失败或按合同完成。
+- 质量审查另用真实 `RLIMIT_FSIZE=32` 复现 64 字节身份标记短写却成功替换；已补最小长度检查及真实短写回归，失败保留旧 marker、清理临时文件。没有新增存储抽象或 wire 字段。
+- Task24b 部署 launcher、可选 Compose overlay、env 模板和中文操作说明正在收口；尚须独立审查与整体验证。Task25 两协议真实 UI/Agent/工具/制品闭环尚未运行。真实 key 已准备，不需用户再次提供。
+- 固定 SDK 为 0.2.120，bundled CLI 2.1.211。无凭证、禁止外网的本地 mock 探针证实：显式 `model=harness-openai`、`thinking={type: disabled}` 配合 `DISABLE_PROMPT_CACHING=1`、`CLAUDE_CODE_EFFORT_LEVEL=unset`、`DISABLE_INTERLEAVED_THINKING=1` 可发出不含 thinking/output_config/cache_control 的真实请求；仅关闭 thinking 仍会携带默认 effort，不能省略对应 env。上述配置已由 Task24a 接入。
+- 固定 CLI 只读审计所需的 `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`、`CLAUDE_CODE_MAX_RETRIES=0`、`CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1`、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 及 cache/effort/interleaved thinking/实验 beta 关闭配置均已接入；Haiku/Sonnet/Opus alias 为 `harness-openai`，不设置 Fable alias。兼容 spawn 先清除继承的 `ANTHROPIC_*`、`CLAUDE_CODE_*`、`OPENAI_*` 再注入明确环境。普通 retry 关闭不等于总 HTTP 只调用一次：独立 stream/watchdog 仍可能重试，真实 smoke 仍需 120s/max_turns/输出界限。
+- 原审计复现的旧 A 路由 transcript 在切到 B 后 DELETE 虚假返回 204 的问题，已由 Task24a 修复并通过回归；仅 DELETE 跨路由，HEAD、续聊、finalize 仍只访问当前 active 根，busy 或 fsync 失败继续 fail closed。
 
 恢复时先检查 Git 与运行中测试资源，读取上述计划/规格和最新 checkpoint。原 V0 镜像分发及 pnpm 漂移已修复并通过同 SHA 两环境验收；继续收口 Task23 审查和 system block 边界，完成 Task24 Runtime/部署接入及 Task25 两协议真实全流程。120s 是 smoke 的单轮轮询/取消界限，不是现有 Runtime 的自动执行 deadline。不得将已有直连连通性、mock 合同或 Fake E2E 记成真实网关/Agent 成功。

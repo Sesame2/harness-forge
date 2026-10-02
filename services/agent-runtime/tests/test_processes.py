@@ -19,6 +19,7 @@ from harness_forge_runtime.execution_store import ExecutionStore
 from harness_forge_runtime.errors import InvalidExecutionState
 from harness_forge_runtime.sessions import SessionStore
 from test_runner import fixture_run
+from test_backend import configured
 
 
 def processes_module():
@@ -27,6 +28,14 @@ def processes_module():
         "process manager is not implemented"
     )
     return importlib.import_module(name)
+
+
+def test_gateway_secret_in_diagnostic_json_keys_is_also_redacted():
+    secret = "fixture-gateway-key-value"
+    encoded = json.dumps({secret: {"message": secret}})
+    redacted = processes_module().redact(encoded, (secret,))
+    assert secret not in redacted
+    assert json.loads(redacted) == {"[redacted]": {"message": "[redacted]"}}
 
 
 # Synthetic subprocess: never invokes the real SDK/CLI, and uses only fixture paths.
@@ -72,7 +81,16 @@ if mode == "control_unknown": exchange("candidate.unknown")
 if mode == "early_event": emit(1, "assistant.message", {"text":"before ACK"})
 if mode == "oversized": print("x" * (4 * 1024 * 1024 + 1), flush=True)
 exchange("candidate.created")
-bucket = pathlib.Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / re.sub(r"[^A-Za-z0-9]", "-", request["paths"]["workspace"])
+root = pathlib.Path(os.environ["CLAUDE_CONFIG_DIR"])
+if mode == "backend":
+    from harness_forge_runtime.settings import RuntimeSettings
+    settings = RuntimeSettings()
+    assert settings.claude_config_dir == root
+    root = settings.effective_claude_config_dir
+    assert root.parent == settings.claude_config_dir / ".harness-backends"
+    assert not any(key.startswith(("ANTHROPIC_", "CLAUDE_CODE_", "OPENAI_")) for key in os.environ)
+    print("credential " + settings.hf_gateway_key, file=sys.stderr, flush=True)
+bucket = root / "projects" / re.sub(r"[^A-Za-z0-9]", "-", request["paths"]["workspace"])
 if mode != "durable_missing": (bucket / (candidate + ".jsonl")).write_text("synthetic transcript")
 if mode == "early_artifact": emit(1, "artifact.candidate", {"artifacts":[]})
 if mode == "durable_mismatch": candidate = "f446076d-2b72-43d8-8bcb-d150498e507d"
@@ -80,6 +98,7 @@ exchange("candidate.durable")
 if mode == "wrong_run": run = "f446076d-2b72-43d8-8bcb-d150498e507d"
 if mode == "missing_artifact": emit(1, "agent.completed", {"candidate_sdk_session_id":candidate, "artifacts":[]})
 emit(1, "assistant.message", {"text": "hello"})
+if mode == "backend": emit(2, "assistant.message", {"text": settings.hf_gateway_key})
 if mode == "bad_sequence": emit(1, "assistant.message", {"text":"duplicate sequence"})
 if mode == "redact":
     emit(2, "tool.started", {"tool_call_id":"read", "name":"Read", "input":{"nested":{"text":"TOKEN=fake-value", "value":os.environ["ANTHROPIC_API_KEY"], "token":"fixture-sensitive-token", "access_token":"fixture-sensitive-access"}}})
@@ -91,8 +110,8 @@ if mode == "redact":
     emit(4, "agent.completed", {"candidate_sdk_session_id":candidate, "artifacts":[]})
     sys.exit(0)
 if mode == "delay": time.sleep(0.2)
-emit(2, "artifact.candidate", {"artifacts": []})
-emit(3, "agent.completed", {"candidate_sdk_session_id":candidate, "artifacts":[]})
+emit(3 if mode == "backend" else 2, "artifact.candidate", {"artifacts": []})
+emit(4 if mode == "backend" else 3, "agent.completed", {"candidate_sdk_session_id":candidate, "artifacts":[]})
 if mode == "trailer": print("invalid trailer", flush=True)
 if mode == "duplicate": emit(4, "agent.completed", {"candidate_sdk_session_id":candidate, "artifacts":[]})
 if mode == "nonzero": sys.exit(3)
@@ -126,6 +145,46 @@ async def manager_fixture(tmp_path):
     sessions = SessionStore(settings.claude_config_dir)
     manager = module.ProcessManager(store, sessions, settings)
     return module, turn, store, manager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["openai-chat", "openai-responses"])
+async def test_real_spawn_reparses_raw_base_and_acknowledges_same_route_without_credentials(
+    tmp_path, monkeypatch, mode
+):
+    module = processes_module()
+    turn, _ = fixture_run(tmp_path)
+    settings = configured(tmp_path, mode)
+    store = ExecutionStore(settings.runtime_state_root)
+    await store.initialize()
+    sessions = SessionStore(settings.effective_claude_config_dir)
+    manager = module.ProcessManager(store, sessions, settings)
+    for name in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_MODEL",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ):
+        monkeypatch.setenv(name, "must-not-reach-worker")
+    children, candidate = fixture_popen(monkeypatch, module, "backend")
+    handle = await manager.start(turn)
+    try:
+        events = [json.loads(line) async for line in manager.stream(handle)]
+        assert events[-1]["type"] == "agent.completed"
+        record = await store.get(turn.run_id)
+        assert record.candidate_sdk_session_id == candidate
+        assert record.candidate_durable_at is not None
+        assert sessions.exists(candidate)
+        assert not (settings.claude_config_dir / "projects").exists()
+        assert children[0].returncode == 0
+        persisted = handle.log_path.read_text() + handle.stderr_path.read_text()
+        assert settings.hf_gateway_key not in persisted
+        assert "must-not-reach-worker" not in persisted
+        assert "[redacted]" in persisted
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio

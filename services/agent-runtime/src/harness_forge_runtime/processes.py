@@ -90,15 +90,18 @@ async def stop_group(pgid: int, process: subprocess.Popen[bytes] | None = None) 
     raise InvalidExecutionState("worker process group is still active")
 
 
-def redact(value: str) -> str:
+def redact(value: str, secrets: tuple[str, ...] = ()) -> str:
     try:
         structured = json.loads(value)
     except (ValueError, RecursionError):
         structured = None
     if isinstance(structured, (dict, list)):
-        return json.dumps(redact_payload(structured))
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
-        secret = os.environ.get(name)
+        return json.dumps(redact_payload(structured, secrets))
+    for secret in (
+        *secrets,
+        os.environ.get("ANTHROPIC_API_KEY"),
+        os.environ.get("ANTHROPIC_AUTH_TOKEN"),
+    ):
         if secret:
             value = value.replace(secret, "[redacted]")
     value = re.sub(
@@ -116,21 +119,21 @@ def redact(value: str) -> str:
     )
 
 
-def redact_payload(value: Any) -> Any:
+def redact_payload(value: Any, secrets: tuple[str, ...] = ()) -> Any:
     if isinstance(value, str):
-        return redact(value)
+        return redact(value, secrets)
     if isinstance(value, dict):
         return {
-            key: "[redacted]"
+            redact(key, secrets): "[redacted]"
             if re.search(
                 r"(?i)(?:api[_-]?key|token|password|secret|^env(?:ironment)?$)",
                 key,
             )
-            else redact_payload(item)
+            else redact_payload(item, secrets)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [redact_payload(item) for item in value]
+        return [redact_payload(item, secrets) for item in value]
     return value
 
 
@@ -268,7 +271,10 @@ class ProcessManager:
         handle.sequence += 1
         # Redact string leaves, never serialized JSON punctuation.
         line = event_line(
-            handle.request.run_id, handle.sequence, kind, redact_payload(payload)
+            handle.request.run_id,
+            handle.sequence,
+            kind,
+            redact_payload(payload, (self.settings.hf_gateway_key,)),
         )
         with handle.log_path.open("a") as log:
             log.write(line)
@@ -371,7 +377,10 @@ class ProcessManager:
                 oversized = not chunk.endswith(b"\n")
                 line = "[oversized diagnostic redacted]\n" if not oversized else ""
             else:
-                line = redact(chunk.decode("utf-8", errors="replace"))
+                line = redact(
+                    chunk.decode("utf-8", errors="replace"),
+                    (self.settings.hf_gateway_key,),
+                )
             if remaining > 0:
                 encoded = line.encode()[:remaining]
                 with handle.stderr_path.open("ab") as log:
@@ -408,6 +417,12 @@ class ProcessManager:
                 ack_r, ack_w = os.pipe()
                 fds.extend((start_r, start_w, control_r, control_w, ack_r, ack_w))
                 env = dict(os.environ)
+                if self.settings.hf_model_backend != "native":
+                    env = {
+                        key: value
+                        for key, value in env.items()
+                        if not key.startswith(("ANTHROPIC_", "CLAUDE_CODE_", "OPENAI_"))
+                    }
                 env.update(
                     {
                         key.upper(): str(value)

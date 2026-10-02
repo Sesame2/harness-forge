@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from harness_forge_runtime.errors import ExecutionConflict, InvalidExecutionState
+from harness_forge_runtime.backend import prepare_backend, purge_stores
 from harness_forge_runtime.execution_store import ExecutionStore
 from harness_forge_runtime.models import ContractModel, RunRequest
 from harness_forge_runtime.processes import ProcessManager
@@ -27,13 +28,13 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime_settings = settings or RuntimeSettings()
-        execution_store = store or ExecutionStore(
-            (settings or RuntimeSettings()).runtime_state_root
-        )
+        execution_store = store or ExecutionStore(runtime_settings.runtime_state_root)
         await execution_store.initialize()
+        await prepare_backend(runtime_settings, execution_store)
+        app.state.runtime_settings = runtime_settings
         app.state.execution_store = execution_store
         app.state.session_store = sessions or SessionStore(
-            (settings or RuntimeSettings()).claude_config_dir
+            runtime_settings.effective_claude_config_dir
         )
         manager = ProcessManager(
             execution_store, app.state.session_store, runtime_settings
@@ -144,16 +145,26 @@ def create_app(
         execution_store = app.state.execution_store
         async with execution_store.lifecycle_lock:
             try:
-                present = str(session_id) in app.state.session_store.list_ids()
+                stores = (
+                    [sessions]
+                    if sessions is not None
+                    else purge_stores(app.state.runtime_settings)
+                )
+                # Validate every root before deletion; a later scan failure must not be hidden.
+                present = False
+                for sdk in stores:
+                    present |= str(session_id) in sdk.list_ids()
                 if await execution_store.list_unfinalized():
                     if present:
                         return JSONResponse(
                             status_code=409, content={"code": "runtime_busy"}
                         )
                     # Read-only durability retry; never prune an active run's empty bucket.
-                    app.state.session_store.sync_deletions()
+                    for sdk in stores:
+                        sdk.sync_deletions()
                     return Response(status_code=204)
-                app.state.session_store.delete(str(session_id))
+                for sdk in stores:
+                    sdk.delete(str(session_id))
             except (OSError, ValueError):
                 return JSONResponse(
                     status_code=500, content={"code": "session_operation_failed"}
