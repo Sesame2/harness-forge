@@ -26,21 +26,22 @@
 **Files:**
 - Create: `services/model-gateway/Dockerfile`（只扩展固定官方镜像，复制配置/窄 hook）。
 - Create: `services/model-gateway/config-chat.yaml`、`config-responses.yaml`（每部署固定一种模式）。
-- Create: `services/model-gateway/capabilities.py`（纯能力校验）、`callback.py`（正式 custom_auth 接口）、`strict-errors.patch`（固定版最小错误处理补丁）。
+- Create: `services/model-gateway/capabilities.py`（纯能力校验）、`callback.py`（正式 custom_auth 接口）、`upstream-errors.patch`（固定版最小错误处理补丁）。
 - Create: `services/model-gateway/tests/test_capabilities.py`、`test_contract.py`（标准库测试，真实网关对本地 HTTP mock）。
 - Modify: `Makefile`（`test-gateway` 显式离线合同目标；默认 test 加无网络纯校验即可）。
 
-- [ ] **Step 1: 写最小合同反例并确认 RED。**
+- [x] **Step 1: 写最小合同反例并确认 RED。**
   使用临时、可观测请求的 mock 上游；Chat fixture 仅接受 `/v1/chat/completions`，Responses fixture 仅接受 `/v1/responses`。不替换 LiteLLM converter。至少先验证普通文本、两工具及下一轮 tool result、stream 分片参数；尚无镜像/配置时测试必须失败。
   `python3 -m unittest discover -s services/model-gateway/tests -p 'test_capabilities.py' -v`；随后 `make test-gateway`（预期缺目标/服务失败）。
-- [ ] **Step 2: 使用固定官方发布并记录可复现镜像身份。**
-  核验 `ghcr.io/berriai/litellm:v1.103.2` manifest/digest/目标架构；不使用 latest/main。配置只含用户指定模型、`openai/` provider、API base/key 的环境引用。Chat 配置启用全局强制 Chat；Responses 不启用。重试为 0，不启 affinity/fallback/polyfill/drop_params，Responses 使用 `store=false`。
-- [ ] **Step 3: 先写能力白名单失败测试，再实现窄 hook。**
+- [x] **Step 2: 使用固定官方发布并记录可复现镜像身份。**
+  已核验官方 `docker.litellm.ai/berriai/litellm:v1.103.2` 的固定 digest 和 arm64/amd64 manifest；不使用 latest/main。配置只含用户指定模型、`openai/` provider、API base/key 的环境引用。Chat 配置启用全局强制 Chat；Responses 不启用。重试为 0，不启 affinity/fallback/polyfill/drop_params，Responses 使用 `store=false`。
+- [x] **Step 3: 先写能力白名单失败测试，再实现窄 hook。**
   纯函数接口 `validate_request(body: dict, mode: str) -> None`，非法输入抛安全 `ValueError`；正式 custom_auth 入口从 Request 取未经清洗的 JSON，常量时间校验网关 key 并检查允许路径，再返回 UserAPIKeyAuth；失败明确 4xx。不能信任 pre-call 内已经清洗的 proxy_server_request.body，不能让用户伪造内部字段绕过校验。
   允许明确关闭的 thinking、普通文本/成功工具和 schema；未知语义字段/块、原生 thinking/signature/cache、image/document/server tool、is_error=true、无法等价参数及会重排的混合形状拒绝，且 mock 请求计数仍为 0。错误不包含值、key、原始请求。
-- [ ] **Step 4: 运行并补齐真实转换器合同。**
+- [x] **Step 4: 运行并补齐真实转换器合同。**
   验证空白文本/顺序、多个 call ID/嵌套 JSON、成功结果回填、usage 来源、finish reason、SSE 顺序；拒绝坏 JSON/未知终态/半截流，401/429/5xx/超时/断开不可成功。已实证的未知 finish→end_turn、坏 JSON→{} 允许以最小固定版本补丁改为明确异常，不改变正常映射；patch 上下文或源版本漂移即构建失败，两个反例必须GREEN。Responses opaque reasoning 的工具轮次回放逐字段检查，`invalid_encrypted_content` 不得删字段后重试；不可支持则明确失败，不能让生产返回丢内容的成功。
   测试网关仅收到内网访问 key，上游只收到 fake OpenAI key；保留 `count_tokens` 不可用错误。`make test-gateway` 必须退出 0 并清理自有临时容器/网络/端口。
+  父级最新独立复验：9 个纯测试、两套真实固定网关合同通过（73.947s），临时合同容器已清理。质量复审新增的 Chat 非流式坏 JSON、ID 归一化碰撞、音频丢弃均先真实 HTTP RED，再 GREEN；只增加转换前拒绝，不修改映射。Responses 多 system block 换行连接的边界已向用户补充询问，规格收口仍待答复。
 - [ ] **Step 5: 审查与提交。**
   审查固定配置、未知字段信任边界及合同是否真经过网关。`git diff --check`，提交 `feat: add fail-closed OpenAI protocol gateway`。不含真实凭证。
 

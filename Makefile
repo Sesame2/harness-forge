@@ -1,4 +1,4 @@
-.PHONY: verify-layout dev down test test-go test-python test-web test-integration test-e2e smoke-claude purge-deleted purge-deleted-dry-run
+.PHONY: verify-layout dev down test test-go test-python test-web test-gateway-unit test-gateway test-integration test-e2e smoke-claude purge-deleted purge-deleted-dry-run
 
 verify-layout:
 	@test -f services/control-plane/go.mod
@@ -12,7 +12,15 @@ dev:
 down:
 	docker compose -f docker-compose.yaml down
 
-test: test-go test-python test-web
+test: test-go test-python test-web test-gateway-unit
+
+test-gateway-unit:
+	python3 -m unittest discover -s services/model-gateway/tests -p test_capabilities.py -v
+
+# No model calls or .env: fixed gateway connects only to a local fake upstream.
+test-gateway: test-gateway-unit
+	docker build -t hf-model-gateway-contract:task23 services/model-gateway
+	python3 -m unittest discover -s services/model-gateway/tests -p test_contract.py -v
 
 test-go:
 	cd services/control-plane && go test ./...

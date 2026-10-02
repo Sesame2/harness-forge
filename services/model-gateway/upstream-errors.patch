@@ -1,0 +1,144 @@
+--- a/litellm/litellm_core_utils/core_helpers.py
++++ b/litellm/litellm_core_utils/core_helpers.py
+@@ -253,7 +253,6 @@
+     mapped: Final = _FINISH_REASON_MAP.get(finish_reason)
+     if mapped is None:
+-        verbose_logger.warning("Unmapped finish_reason '%s', defaulting to 'stop'", finish_reason)
+-        return "stop"
++        raise ValueError("HF_GATEWAY_UNKNOWN_FINISH_REASON")
+     return mapped
+ 
+ 
+--- a/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py
++++ b/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py
+@@ -1417,6 +1417,6 @@
+         elif openai_finish_reason in ["content_filter", "refusal"]:
+             return "refusal"
+-        return "end_turn"
++        raise ValueError("HF_GATEWAY_UNKNOWN_FINISH_REASON")
+ 
+     @staticmethod
+     def _positive_int(value: object) -> int:
+--- a/litellm/llms/anthropic/experimental_pass_through/responses_adapters/transformation.py
++++ b/litellm/llms/anthropic/experimental_pass_through/responses_adapters/transformation.py
+@@ -673,8 +673,8 @@
+             elif isinstance(item, ResponseFunctionToolCall):
+                 try:
+-                    input_data = json.loads(item.arguments) if item.arguments else {}
++                    input_data = json.loads(item.arguments)
+                 except (json.JSONDecodeError, TypeError):
+-                    input_data = {}
++                    raise ValueError("HF_GATEWAY_INVALID_TOOL_ARGUMENTS") from None
+                 content.append(
+                     AnthropicResponseContentBlockToolUse(
+                         type="tool_use",
+@@ -713,8 +713,8 @@
+                 elif item_type == "function_call":
+                     try:
+-                        input_data = json.loads(item.get("arguments", "{}"))
++                        input_data = json.loads(item.get("arguments"))
+                     except (json.JSONDecodeError, TypeError):
+-                        input_data = {}
++                        raise ValueError("HF_GATEWAY_INVALID_TOOL_ARGUMENTS") from None
+                     content.append(
+                         AnthropicResponseContentBlockToolUse(
+                             type="tool_use",
+--- a/litellm/litellm_core_utils/streaming_handler.py
++++ b/litellm/litellm_core_utils/streaming_handler.py
+@@ -1372,6 +1372,8 @@
+                 model_response.choices[0].logprobs = response_obj["logprobs"]
+ 
+             if response_obj["usage"] is not None:
++                from capabilities import validate_usage
++                validate_usage(response_obj["usage"], "chat")
+                 if isinstance(response_obj["usage"], dict):
+                     setattr(
+                         model_response,
+@@ -1714,7 +1714,7 @@
+         if _finish_reason is not None:
+             model_response.choices[0].finish_reason = _finish_reason
+         else:
+-            model_response.choices[0].finish_reason = "stop"
++            raise ValueError("HF_GATEWAY_TRUNCATED_STREAM")
+ 
+         ## if tool use
+         if (
+@@ -1844,5 +1846,7 @@
+         except StopIteration:
+             if self.sent_last_chunk is True:
++                if not any(getattr(chunk, "usage", None) is not None for chunk in self.chunks):
++                    raise ValueError("HF_GATEWAY_USAGE_UNAVAILABLE")
+                 try:
+                     complete_streaming_response = litellm.stream_chunk_builder(
+                         chunks=self.chunks,
+@@ -2096,5 +2100,7 @@
+     async def _finalize_completed_stream(self, cache_hit: bool) -> "ModelResponseStream":
+         if self.sent_last_chunk is True:
++            if not any(getattr(chunk, "usage", None) is not None for chunk in self.chunks):
++                raise ValueError("HF_GATEWAY_USAGE_UNAVAILABLE")
+             # log the final chunk with accurate streaming values
+             try:
+                 complete_streaming_response = await asyncify(litellm.stream_chunk_builder)(
+--- a/litellm/litellm_core_utils/llm_response_utils/convert_dict_to_response.py
++++ b/litellm/litellm_core_utils/llm_response_utils/convert_dict_to_response.py
+@@ -716,6 +716,8 @@
+                 choice_list.append(choice)
+             model_response_object.choices = choice_list
+ 
++            from capabilities import validate_usage
++            validate_usage(response_object.get("usage"), "chat")
+             if "usage" in response_object and response_object["usage"] is not None:
+                 usage_object: Final = litellm.Usage(**response_object["usage"])
+                 setattr(model_response_object, "usage", usage_object)
+--- a/litellm/llms/openai/responses/transformation.py
++++ b/litellm/llms/openai/responses/transformation.py
+@@ -572,5 +572,9 @@
+         except Exception:
+             raise OpenAIError(message=raw_response.text, status_code=raw_response.status_code)
++        from capabilities import validate_usage, validate_response_status, validate_responses_output
++        validate_usage(raw_response_json.get("usage"), "responses")
++        validate_response_status(raw_response_json)
++        validate_responses_output(raw_response_json.get("output", []))
+         raw_response_headers: Final = dict(raw_response.headers)
+         processed_headers: Final = process_response_headers(raw_response_headers)
+         try:
+@@ -636,6 +640,13 @@
+         event_type: Final = str(parsed_chunk.get("type"))
++        from capabilities import validate_usage, validate_response_status, validate_responses_output
++        if event_type in ("response.completed", "response.incomplete"):
++            validate_usage((parsed_chunk.get("response") or {}).get("usage"), "responses")
++            validate_response_status(parsed_chunk.get("response") or {})
++            validate_responses_output((parsed_chunk.get("response") or {}).get("output", []))
++        if event_type in ("response.output_item.added", "response.output_item.done"):
++            validate_responses_output([parsed_chunk.get("item") or {}])
+         event_pydantic_model: Final = OpenAIResponsesAPIConfig.get_event_model_class(event_type=event_type)
+         # Some OpenAI-compatible providers send error.code: null; coalesce so validation succeeds.
+         try:
+             error_obj: Final = parsed_chunk.get("error")
+             if isinstance(error_obj, dict) and error_obj.get("code") is None:
+--- a/litellm/proxy/anthropic_endpoints/endpoints.py
++++ b/litellm/proxy/anthropic_endpoints/endpoints.py
+@@ -219,7 +219,9 @@
+     except Exception as e:
+-        await proxy_logging_obj.post_call_failure_hook(
++        transformed_exception = await proxy_logging_obj.post_call_failure_hook(
+             user_api_key_dict=user_api_key_dict, original_exception=e, request_data=base_llm_response_processor.data
+         )
++        if transformed_exception is not None:
++            e = transformed_exception
+         log_llm_api_exception(e, base_llm_response_processor.litellm_call_id)
+ 
+         if isinstance(e, ProxyException):
+--- a/openai/_base_client.py
++++ b/openai/_base_client.py
+@@ -645,6 +645,11 @@
+         if data is None:
+             return cast(ResponseT, None)
+ 
++        if getattr(cast_to, "__name__", "") in {"ChatCompletion", "ChatCompletionChunk"} and isinstance(data, dict):
++            from capabilities import validate_usage, validate_chat_output
++            if data.get("usage") is not None:
++                validate_usage(data["usage"], "chat")
++            validate_chat_output(data, getattr(cast_to, "__name__", "") == "ChatCompletionChunk")
+         if cast_to is object:
+             return cast(ResponseT, data)

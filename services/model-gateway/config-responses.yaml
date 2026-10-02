@@ -1,0 +1,21 @@
+model_list:
+  - model_name: harness-openai
+    litellm_params:
+      model: os.environ/HF_GATEWAY_UPSTREAM_MODEL
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: os.environ/OPENAI_BASE_URL
+      store: false
+      num_retries: 0
+      timeout: 30
+router_settings:
+  num_retries: 0
+  disable_cooldowns: true
+litellm_settings:
+  use_chat_completions_url_for_anthropic_messages: false
+  drop_params: false
+  num_retries: 0
+  turn_off_message_logging: true
+  callbacks: [callback.guard]
+general_settings:
+  custom_auth: callback.authenticate
+  master_key: os.environ/HF_GATEWAY_KEY
