@@ -59,6 +59,7 @@ async def run_worker(
         nonlocal candidate
         await control("candidate.created", value)
         candidate = value
+        emit("phase.changed", {"phase": "agent"})
 
     try:
         # SDK/library diagnostics must never share the public NDJSON stream.

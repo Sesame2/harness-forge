@@ -29,6 +29,7 @@ async def authenticate(request: Request, api_key: str) -> UserAPIKeyAuth:
             if str(error).startswith("HF_GATEWAY_")
             else "HF_GATEWAY_INVALID_JSON"
         )
+        print(code, flush=True)
         raise HTTPException(400, code) from None
     return UserAPIKeyAuth(api_key=api_key)
 
@@ -37,6 +38,13 @@ class CapabilityGuard(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type != "anthropic_messages":
             raise HTTPException(403, "HF_GATEWAY_ROUTE_UNSUPPORTED")
+        # Opt-in upstream controls, not a substitute for replaying reasoning.
+        if os.environ.get("HF_GATEWAY_DISABLE_THINKING") == "true":
+            data["extra_body"] = (
+                {"thinking": {"type": "disabled"}}
+                if os.environ.get("HF_GATEWAY_MODE") == "chat"
+                else {"reasoning": {"effort": "none"}}
+            )
         return data
 
     async def async_post_call_failure_hook(
@@ -45,6 +53,12 @@ class CapabilityGuard(CustomLogger):
         status = getattr(original_exception, "status_code", 502)
         if type(status) is not int or not 400 <= status <= 599:
             status = 502
+        print(
+            "HF_GATEWAY_TIMEOUT"
+            if type(original_exception).__name__ in {"Timeout", "APITimeoutError"}
+            else "HF_GATEWAY_UPSTREAM_ERROR",
+            flush=True,
+        )
         return HTTPException(status, "HF_GATEWAY_UPSTREAM_ERROR")
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):

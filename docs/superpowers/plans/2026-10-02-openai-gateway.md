@@ -16,7 +16,7 @@
 
 - 复用 `.worktrees/v0-implementation`；主目录 `.env` 已有真实 key，禁止读取后打印、提交、复制进镜像或测试快照。只有显式 live 命令可加载该文件。
 - 每个实现任务先 RED→GREEN，再做规格和质量审查。一次只有一个代码实施者，其他 agent 可并行只读审查；父级独立复验。
-- 若固定转换器合同不成立，先给出最小反例；可以拒绝不支持的请求形状，不可维护另一套转换器、静默改参数或换协议/模型来过测试。
+- 若固定转换器合同不成立，先给出最小反例；可以拒绝不支持的请求形状，不可维护另一套转换器、静默改参数或换协议/模型来过测试。2026-10-23 用户明确批准混合文本/工具块使用成熟转换器的既有顺序规范化，保留全部文本、参数、ID 和结果关联，并授权按新边界两种模式各再做一次真实验收；这替代早期要求拒绝所有重排形状的限制。
 - 不改变旧 `make test` / integration / Fake E2E 的无付费请求边界。原 Task22 CI 固定应用 SHA（MinIO 分发修复后重新冻结），不能冒充新网关 CI 验收。
 
 ## Chunk 1: 成熟转换器合同与严格入口
@@ -37,13 +37,14 @@
   已核验官方 `docker.litellm.ai/berriai/litellm:v1.103.2` 的固定 digest 和 arm64/amd64 manifest；不使用 latest/main。配置只含用户指定模型、`openai/` provider、API base/key 的环境引用。Chat 配置启用全局强制 Chat；Responses 不启用。重试为 0，不启 affinity/fallback/polyfill/drop_params，Responses 使用 `store=false`。
 - [x] **Step 3: 先写能力白名单失败测试，再实现窄 hook。**
   纯函数接口 `validate_request(body: dict, mode: str) -> None`，非法输入抛安全 `ValueError`；正式 custom_auth 入口从 Request 取未经清洗的 JSON，常量时间校验网关 key 并检查允许路径，再返回 UserAPIKeyAuth；失败明确 4xx。不能信任 pre-call 内已经清洗的 proxy_server_request.body，不能让用户伪造内部字段绕过校验。
-  允许明确关闭的 thinking、普通文本/成功工具和 schema；未知语义字段/块、原生 thinking/signature/cache、image/document/server tool、is_error=true、无法等价参数及会重排的混合形状拒绝，且 mock 请求计数仍为 0。错误不包含值、key、原始请求。
+  允许明确关闭的 thinking、普通文本/成功工具和 schema；未知语义字段/块、原生 thinking/signature/cache、image/document/server tool、is_error=true、无法等价参数拒绝，且 mock 请求计数仍为 0。混合文本/工具块按2026-10-23用户确认使用成熟转换器既有规范化。错误不包含值、key、原始请求。
 - [x] **Step 4: 运行并补齐真实转换器合同。**
   验证空白文本/顺序、多个 call ID/嵌套 JSON、成功结果回填、usage 来源、finish reason、SSE 顺序；拒绝坏 JSON/未知终态/半截流，401/429/5xx/超时/断开不可成功。已实证的未知 finish→end_turn、坏 JSON→{} 允许以最小固定版本补丁改为明确异常，不改变正常映射；patch 上下文或源版本漂移即构建失败，两个反例必须GREEN。Responses opaque reasoning 的工具轮次回放逐字段检查，`invalid_encrypted_content` 不得删字段后重试；不可支持则明确失败，不能让生产返回丢内容的成功。
   测试网关仅收到内网访问 key，上游只收到 fake OpenAI key；保留 `count_tokens` 不可用错误。`make test-gateway` 必须退出 0 并清理自有临时容器/网络/端口。
-  父级最新独立复验：9 个纯测试、两套真实固定网关合同通过（73.947s），临时合同容器已清理。质量复审新增的 Chat 非流式坏 JSON、ID 归一化碰撞、音频丢弃均先真实 HTTP RED，再 GREEN；只增加转换前拒绝，不修改映射。Responses 多 system block 换行连接的边界已向用户补充询问，规格收口仍待答复。
-- [ ] **Step 5: 审查与提交。**
+  早期父级独立复验：9 个纯测试、两套真实固定网关合同通过（73.947s），临时合同容器已清理。质量复审新增的 Chat 非流式坏 JSON、ID 归一化碰撞、音频丢弃均先真实 HTTP RED，再 GREEN。2026-10-23 按用户确认规范化补齐交错多工具合同，11纯测试及两模式合同通过（83.119s），不修改成熟映射。
+- [x] **Step 5: 审查与提交。**
   审查固定配置、未知字段信任边界及合同是否真经过网关。`git diff --check`，提交 `feat: add fail-closed OpenAI protocol gateway`。不含真实凭证。
+  已提交 `529a11a`；2026-10-23 将 system 多块格式边界明确记录为语义保真及块间换行规范化，没有声称收到额外用户确认或字节级等同。新增 SDK 预算历史合同已在真实固定转换器双模式通过（79.990s）。
 
 ## Chunk 2: Runtime 与部署接线
 
@@ -80,13 +81,13 @@
 - Modify: `docs/development/verification.md`、本计划。
 - Create: `docs/superpowers/checkpoints/2026-10-02-openai-gateway.md`。
 
-- [ ] **Step 1: 先写并跑失败的 smoke 编排测试。**
+- [x] **Step 1: 先写并跑失败的 smoke 编排测试。**
   假 HTTP/进程测试证明每模式使用指定模型、完整第二轮/独立会话、异常不发布、超时取消/finalize/清理；空凭证及非 live 默认绝无真实调用。
-- [ ] **Step 2: 实现最小真实测试编排。**
+- [x] **Step 2: 实现最小真实测试编排。**
   复用合成 CSV、现有 profile、分析证据/manifest 检查及 Playwright。真实 Web 页面创建/上传/发送，核对真实 Python Bash 成功、两轮各一个 HTML 版本、第二 Conversation 不带前者 source、刷新/replay与制品切换；至少确认 iframe ECharts 实例实际绘制且无 pageerror，不只检查 stub。取消和可控失败/重启使用已有确定性基础设施证明，不靠无限重复付费请求触发。
-- [ ] **Step 3: 顺序执行两种真实模式。**
+- [x] **Step 3: 顺序执行两种真实模式。**
   用主目录 `.env`，明确 `chat` 然后 `responses`，每模式独立 project/端口/卷，不复用默认开发卷。单轮有超时/输出/turn 上限，每失败最多三次定位修复后重测；仍失败时记录安全错误及反例，不跨协议 fallback、不隐藏失败。只向用户指定上游发送合成资料。
-- [ ] **Step 4: 全量离线和应用回归。**
+- [x] **Step 4: 全量离线和应用回归。**
   `make test`、`make test-gateway`、`make test-integration`、`make test-e2e`、`pnpm --dir apps/web build`、`make verify-layout`、空 env Compose config 和 `git diff --check`。父级验证自有测试资源全部清理。
 - [ ] **Step 5: 记录、最终审查、同步主分支。**
   记录真实/替身证据来源、代码 SHA、固定镜像、协议、脱敏模型、Run/Artifact IDs、结果与限制，不记 key/原始敏感报文。审查通过后提交，按既有授权快进 main 并 push；核对远端及两个工作区状态。原生真实 Claude 未测试须单列，不能以 OpenAI smoke 替代声明。仅当所有已批准硬闸门满足才勾选完成。

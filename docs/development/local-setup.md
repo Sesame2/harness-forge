@@ -89,16 +89,19 @@ read -r answer
 
 默认栈不启用网关。可选 [`docker-compose.openai.yaml`](../../docker-compose.openai.yaml) 增加一个固定 LiteLLM 网关，保留 Go Docker Provider 和 Python Claude Agent SDK。仅支持声明过的文本、流式、本地 function 工具与多轮上下文；原生 thinking、显式缓存、多模态、服务器工具、未知语义等明确失败，不能认为所有 Claude 能力都可无损转换。详细边界见[中文规格](../superpowers/specs/2026-10-02-openai-gateway-design.md)。
 
-编辑仓库根 `.env`（已存在时不要覆盖），只需这四个用户字段，未使用协议的模型可留空：
+编辑仓库根 `.env`（已存在时不要覆盖），填写这四个用户字段及可选的非思考开关，未使用协议的模型可留空：
 
 ```dotenv
 OPENAI_API_KEY=
 OPENAI_BASE_URL=
 OPENAI_CHAT_MODEL=
 OPENAI_RESPONSES_MODEL=
+OPENAI_DISABLE_THINKING=false
 ```
 
 上游地址必须为 HTTPS，不允许用户名、密码、query、fragment、反斜杠或空白。根地址自动补 `/v1`，已有路径只去末尾斜杠，不重复追加 `/v1`。填写实际模型名，不填 LiteLLM 的 provider 前缀；不会自动猜测、替换模型或切换协议。`chmod 600 .env`，不要把真实值放进命令行、截图或 Git。
+
+`OPENAI_DISABLE_THINKING` 可省略或留空，默认 `false`；只接受小写 `true/false`。仅在上游文档确认支持时设为 `true`：Chat 明确发送 `thinking.type=disabled`，Responses 明确发送 `reasoning.effort=none`。这适用于本次已实测的 DeepSeek-compatible 上游，避免其默认 thinking 要求回放无法保真的 reasoning；不是所有 OpenAI 模型都接受这些值。不会按模型名猜测，不支持时仍报错，不补造/丢弃 reasoning，也不重试。此选项同时作用于 check 和实际网关请求，原生 Claude 不受影响。
 
 ```sh
 # 下列命令显式访问真实上游，可能收费；不会被 make test 调用。
@@ -112,7 +115,7 @@ node scripts/openai.mjs dev --api chat
 node scripts/openai.mjs check --api chat --env-file /absolute/path/to/.env
 ```
 
-`check` 每次只向选中接口发送一次最多 64 output tokens 的短文本请求，30 秒超时，无重试；只打印模式、HTTP 状态和模型哈希，不输出响应或凭证。启动器使用 Node 原生 dotenv 解析而非 `source`，仅读取上述四个字段，并覆盖内部数据库、MinIO、Runtime 路径和 Provider，避免继承其他项目的连接配置。网关 key 每次启动随机生成，OpenAI key 只传入 gateway，Runtime 只取得网关 key；网关不发布宿主机端口。不要直接打印带真实配置的 `docker compose config`。
+`check` 每次只向选中接口发送一次最多 64 output tokens 的短文本请求，30 秒超时，无重试；只打印模式、HTTP 状态和模型哈希，不输出响应或凭证。启动器使用 Node 原生 dotenv 解析而非 `source`，仅读取上述字段，并覆盖内部数据库、MinIO、Runtime 路径和 Provider，避免继承其他项目的连接配置。网关 key 每次启动随机生成，OpenAI key 只传入 gateway，Runtime 只取得网关 key；网关不发布宿主机端口。不要直接打印带真实配置的 `docker compose config`。
 
 `dev` 使用独立 Compose 项目 `harness-forge-openai`，端口与默认开发栈相同，所以启动前先停止占用端口的默认栈。重复 `dev` 保留卷；失败也不自动销毁开发数据。停止并保留卷：
 
@@ -123,7 +126,7 @@ docker compose --env-file /dev/null -p harness-forge-openai \
 
 兼容模式按协议、规范上游 URL、实际模型隔离 Session 目录；密钥轮换不改变归属。旧路由仍有未 finalize Run 时拒绝切换；切换后旧会话不能在另一模型上续聊，切回原路由才能继续，不迁移 transcript。已软删除会话的物理清理仍覆盖受管旧路由，失败不会假报成功。
 
-显式完整 smoke 入口如下，按顺序运行，不把连通性检查当作应用验收。完整浏览器扩展及两种真实流程的最终结果以[最新 checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md) 为准，当前仍在实施验收中：
+显式完整 smoke 入口如下，按顺序运行，不把连通性检查当作应用验收。2026-10-24两种模式的三Run/两会话真实流程均已通过，证据及上游限制见[验证记录](verification.md#openai-双协议真实验收2026-10-24)与[checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)：
 
 ```sh
 node scripts/openai.mjs smoke --api chat
@@ -134,6 +137,8 @@ node scripts/openai.mjs smoke --api responses
 smoke 每次生成独立项目 `harness-forge-openai-smoke-chat-<随机后缀>` 或 `harness-forge-openai-smoke-responses-<随机后缀>`，启动日志给出本次完整项目名；各自 Web/API/制品/Runtime/Postgres/MinIO/Console 端口依次为 `45173/48080/48081/48090/45432/49000/49001`、`55173/58080/58081/58090/55432/59000/59001`。两模式按顺序运行；同协议并发可能端口冲突而失败，但不会共用项目或清理另一调用的卷。如已有本次项目名的容器、卷或网络，立即拒绝，不自动接管。启动成功、失败或 SIGINT/SIGTERM 都只清理本次拥有的项目及卷；若报告 `HF_OPENAI_CLEANUP_FAILED`，按启动日志中的完整项目名核对归属再手工清理，不删除其他项目。需要已安装 `apps/web` 依赖，入口会显式安装其固定 Playwright Chromium。
 
 真实 smoke 仅使用合成 CSV，单 Run 120 秒、Profile 最大 8 轮、兼容模式单次输出上限 8192 tokens；SDK 的 Anthropic `max_budget_usd` 不是 OpenAI 上游的精确费用上限。网关禁用自动重试/fallback，但固定 Claude CLI 部分连接/流中恢复分支并不受单一 retry 参数控制，因此不承诺整个工作流只有一个 HTTP 请求。失败不会由 launcher 自动重跑，修复后显式复测，禁止无界付费循环。
+
+当前用户Responses上游对工具历史还有额外顺序约束：LiteLLM把function_call放到assistant说明前时，上游可能拒绝夹在调用与结果之间的说明并返回 `No tool output found`。smoke要求工具期间不输出说明、批量计算写文件以减少轮数，已在两模式完成验收；不保证模型一定遵从提示，发生这种上游拒绝仍应失败，不能删除文本/结果或静默切协议后重试。任一实际工具返回错误也按既定不等价边界明确失败。
 
 无付费验证：`make test-openai` 只用假 HTTP/子进程；`make test-gateway` 才显式启动固定真实网关接本地 mock 上游。无凭证的覆盖文件渲染检查可用下面命令；占位值仅为配置校验服务，不表示可以无凭证调用：
 

@@ -57,13 +57,15 @@ async function configuration(envFile, api, readFile) {
   try { fields = parseEnv(await readFile(envFile, 'utf8')) } catch { throw fail('ENV_FILE') }
   const key = fields.OPENAI_API_KEY, model = fields[api === 'chat' ? 'OPENAI_CHAT_MODEL' : 'OPENAI_RESPONSES_MODEL']
   const value = fields.OPENAI_BASE_URL
+  const disableThinking = fields.OPENAI_DISABLE_THINKING || 'false'
   try {
     if (!key?.trim() || !model?.trim() || /[\x00-\x1f\x7f]/.test(key) || /\s|[\x00-\x1f\x7f]/.test(model)
-      || !value || /\s|[\\\x00-\x1f\x7f?#]/.test(value) || /:\/\/[^/]*@/.test(value)) throw fail('CONFIG')
+      || !value || /\s|[\\\x00-\x1f\x7f?#]/.test(value) || /:\/\/[^/]*@/.test(value)
+      || !['true', 'false'].includes(disableThinking)) throw fail('CONFIG')
     const url = new URL(value)
     if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) throw fail('CONFIG')
     url.pathname = url.pathname.replace(/\/+$/, '') || '/v1'
-    return { key, model, base: url.href.replace(/\/$/, ''), modelHash: createHash('sha256').update(model).digest('hex').slice(0, 12) }
+    return { key, model, disableThinking: disableThinking === 'true', base: url.href.replace(/\/$/, ''), modelHash: createHash('sha256').update(model).digest('hex').slice(0, 12) }
   } catch { throw fail('CONFIG') }
 }
 
@@ -85,6 +87,7 @@ function deployment(api, command, config, platform) {
     HF_MODEL_BACKEND: `openai-${api}`, HF_GATEWAY_URL: 'http://model-gateway:4000', HF_GATEWAY_KEY: `sk-hf-${randomBytes(32).toString('hex')}`,
     HF_OPENAI_BASE_URL: config.base, HF_OPENAI_MODEL: config.model,
     HF_GATEWAY_MODE: api, HF_GATEWAY_UPSTREAM_MODEL: `openai/${config.model}`, OPENAI_BASE_URL: config.base, OPENAI_API_KEY: config.key,
+    HF_GATEWAY_DISABLE_THINKING: String(config.disableThinking),
   }
   const compose = ['compose', '--env-file', '/dev/null', '-p', project, '-f', `${root}/docker-compose.yaml`, '-f', `${root}/docker-compose.openai.yaml`]
   return { project, env, compose, webURL: env.WEB_ORIGIN, baseURL: `http://localhost:${ports[1]}` }
@@ -118,6 +121,7 @@ export async function runOpenAI(argv, {
   checkAbort()
   if (command === 'check') {
     const body = { model: config.model, stream: false, store: false,
+      ...(config.disableThinking ? (api === 'chat' ? { thinking: { type: 'disabled' } } : { reasoning: { effort: 'none' } }) : {}),
       ...(api === 'chat' ? { max_completion_tokens: 64, messages: [{ role: 'user', content: 'Reply with OK.' }] } : { max_output_tokens: 64, input: 'Reply with OK.' }),
     }
     const response = await perform('CHECK_FAILED', () => fetch(`${config.base}/${api === 'chat' ? 'chat/completions' : 'responses'}`, {
@@ -154,11 +158,23 @@ export async function runOpenAI(argv, {
     await perform('START_FAILED', up)
     await perform('BROWSER_INSTALL_FAILED', () => run('pnpm', ['exec', 'playwright', 'install', 'chromium'], { env: platform, cwd: `${root}/apps/web`, signal }))
     // A separate process lets cancellation stop the browser/model workflow before volume cleanup.
-    smokeRunner ??= async ({ fullUI, webURL, baseURL }) => JSON.parse(await run(process.execPath, ['--input-type=module', '--eval',
-      `import { runSmoke } from './apps/web/scripts/smoke-claude.mjs'; const r=await runSmoke({fullUI:${fullUI},webURL:process.env.SMOKE_WEB_URL,baseURL:process.env.SMOKE_API_URL,log:()=>{}}); console.log(JSON.stringify({project_id:r?.project_id,conversation_ids:r?.conversation_ids,run_ids:r?.run_ids,artifact_ids:r?.artifact_ids}));`,
-    ], { env: { ...platform, SMOKE_WEB_URL: webURL, SMOKE_API_URL: baseURL }, cwd: root, signal }))
+    smokeRunner ??= async ({ fullUI, webURL, baseURL }) => {
+      const output = JSON.parse(await run(process.execPath, ['--input-type=module', '--eval',
+        `import { runSmoke } from './apps/web/scripts/smoke-claude.mjs'; const diagnostics=[]; let result; try { result=await runSmoke({fullUI:${fullUI},webURL:process.env.SMOKE_WEB_URL,baseURL:process.env.SMOKE_API_URL,log:line=>diagnostics.push(line)}); } catch {} console.log(JSON.stringify({result,diagnostics}));`,
+      ], { env: { ...platform, SMOKE_WEB_URL: webURL, SMOKE_API_URL: baseURL }, cwd: root, signal }))
+      for (const line of output.diagnostics ?? []) {
+        if (typeof line === 'string' && /^(Smoke:|Run:|Run diagnostic:|Events:|Cleanup:)/.test(line)) log(line)
+      }
+      return output.result
+    }
     evidence = smokeEvidence(await perform('SMOKE_FAILED', () => smokeRunner({ fullUI: true, webURL, baseURL, signal, log: () => {} })))
-  } catch (error) { failure = error }
+  } catch (error) {
+    failure = error
+    try {
+      const diagnostics = await run('docker', [...compose, 'logs', '--no-color', '--no-log-prefix', '--tail=200', 'model-gateway'], { env: childEnv, cwd: root, signal })
+      for (const code of new Set(diagnostics.match(/^HF_GATEWAY_[A-Z_]+$/gm) ?? [])) log(code)
+    } catch { /* Preserve the original failure when diagnostics are unavailable. */ }
+  }
   finally {
     // Do not pass an aborted signal: cleanup must finish after startup/smoke failures and Ctrl-C.
     try { await run('docker', [...compose, 'down', '-v', '--remove-orphans', '--timeout=10'], { env: childEnv, cwd: root }) }

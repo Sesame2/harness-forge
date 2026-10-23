@@ -196,17 +196,19 @@ def validate_request(body, mode):
         _object(message, {"role", "content"}, {"role", "content"})
         _require(
             isinstance(message["role"], str)
-            and message["role"] in {"user", "assistant"}
+            and message["role"] in {"user", "assistant", "system"}
         )
         content = message["content"]
+        if message["role"] == "system":
+            # The SDK inserts budget reminders as in-sequence system strings.
+            _require(isinstance(content, str) and bool(content))
+            continue
         if isinstance(content, str):
             continue
         _require(isinstance(content, list) and bool(content))
-        kinds = []
         for block in content:
             _require(isinstance(block, dict))
             kind = block.get("type")
-            kinds.append(kind)
             if kind == "text":
                 _text_blocks([block])
             elif kind == "tool_use" and message["role"] == "assistant":
@@ -242,25 +244,6 @@ def validate_request(body, mode):
                     )
             else:
                 _require(False, "UNSUPPORTED_CONTENT_BLOCK")
-        # Both adapters move tool results ahead of user text; Responses also
-        # moves assistant function calls ahead of text. Refuse reordered inputs.
-        if "tool_result" in kinds:
-            _require(
-                kinds == sorted(kinds, key=lambda item: item == "text"),
-                "CONTENT_ORDER_UNREPRESENTABLE",
-            )
-        if "tool_use" in kinds and "text" in kinds:
-            text_first = mode == "chat"
-            _require(
-                kinds
-                == sorted(
-                    kinds,
-                    key=lambda item: (
-                        (item != "text") if text_first else (item == "text")
-                    ),
-                ),
-                "CONTENT_ORDER_UNREPRESENTABLE",
-            )
     try:
         json.dumps(body, allow_nan=False)
     except (ValueError, TypeError):

@@ -18,7 +18,7 @@ IMAGE = "hf-model-gateway-contract:task23"
 
 
 class GatewayContract(unittest.TestCase):
-    def check_mode(self, mode):
+    def check_mode(self, mode, disable_thinking=False):
         requests = []
         scenario = ["text"]
         cancelled = threading.Event()
@@ -529,6 +529,8 @@ class GatewayContract(unittest.TestCase):
                     f"OPENAI_BASE_URL=http://host.docker.internal:{server.server_port}/v1",
                     "--env",
                     f"HF_GATEWAY_MODE={mode}",
+                    "--env",
+                    f"HF_GATEWAY_DISABLE_THINKING={str(disable_thinking).lower()}",
                     IMAGE,
                     "--config",
                     f"/app/gateway/config-{mode}.yaml",
@@ -600,6 +602,14 @@ class GatewayContract(unittest.TestCase):
             self.assertEqual(requests[0][1], "Bearer fake-openai-key")
             self.assertEqual(requests[0][2]["model"], "gpt-4.1")
             self.assertIs(requests[0][2]["store"], False)
+            thinking_key = "thinking" if mode == "chat" else "reasoning"
+            if disable_thinking:
+                self.assertEqual(
+                    requests[0][2][thinking_key],
+                    {"type": "disabled"} if mode == "chat" else {"effort": "none"},
+                )
+                return
+            self.assertNotIn(thinking_key, requests[0][2])
             for extra in (
                 {"top_k": 1},
                 {"thinking": {"type": "enabled", "budget_tokens": 1024}},
@@ -607,6 +617,7 @@ class GatewayContract(unittest.TestCase):
                 {"metadata": {"user_api_key_user_id": "spoof"}},
                 {"user": "spoof"},
                 {"callbacks": []},
+                {"extra_body": {"thinking": {"type": "enabled"}}},
                 {"output_config": {"effort": "high"}},
                 {"tool_choice": {"type": "auto", "disable_parallel_tool_use": True}},
                 {
@@ -663,21 +674,6 @@ class GatewayContract(unittest.TestCase):
                                     "content": "bad",
                                     "is_error": True,
                                 }
-                            ],
-                        }
-                    ]
-                },
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "before"},
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": "call-1",
-                                    "content": "ok",
-                                },
                             ],
                         }
                     ]
@@ -841,6 +837,43 @@ class GatewayContract(unittest.TestCase):
                     if mode == "chat"
                     else [{"type": "input_text", "text": "  next\n"}],
                 )
+            with self.subTest(mode=mode, scenario="sdk-inline-budget-system"):
+                history = [
+                    {"role": "user", "content": "Inspect data"},
+                    {"role": "system", "content": "  USD budget remaining: 2\n"},
+                    {"role": "assistant", "content": "Completed"},
+                    {"role": "user", "content": "Continue"},
+                    {"role": "system", "content": " USD budget remaining: 1.5\t"},
+                ]
+                status, output = call({"messages": history})
+                self.assertEqual(status, 200, output)
+                sent = requests[-1][2]
+                actual = sent["messages" if mode == "chat" else "input"]
+                self.assertEqual([item["role"] for item in actual], [item["role"] for item in history])
+                self.assertEqual(
+                    [item["content"] if mode == "chat" else item["content"][0]["text"] for item in actual],
+                    [item["content"] for item in history],
+                )
+            with self.subTest(mode=mode, scenario="approved-mixed-block-normalization"):
+                texts = [" before\n", " between\t", " after "]
+                calls = [{"type": "tool_use", "id": f"call-{index}", "name": "lookup", "input": argument} for index, argument in enumerate(arguments)]
+                results = [{"type": "tool_result", "tool_use_id": f"call-{index}", "content": f" result {index}\n", "is_error": False} for index in range(2)]
+                blocks = [{"type": "text", "text": text} for text in texts]
+                status, output = call({"tools": tools, "messages": [
+                    {"role": "user", "content": "start"},
+                    {"role": "assistant", "content": [blocks[0], calls[0], blocks[1], calls[1], blocks[2]]},
+                    {"role": "user", "content": [blocks[0], results[0], blocks[1], results[1], blocks[2]]},
+                ]})
+                self.assertEqual(status, 200, output)
+                sent = requests[-1][2]["messages" if mode == "chat" else "input"]
+                mapped_calls = sent[1]["tool_calls"] if mode == "chat" else [item for item in sent if item.get("type") == "function_call"]
+                self.assertEqual([item["id" if mode == "chat" else "call_id"] for item in mapped_calls], ["call-0", "call-1"])
+                self.assertEqual([json.loads((item["function"] if mode == "chat" else item)["arguments"]) for item in mapped_calls], arguments)
+                mapped_results = [item for item in sent if item.get("role") == "tool" or item.get("type") == "function_call_output"]
+                self.assertEqual([(item.get("tool_call_id", item.get("call_id")), item.get("content", item.get("output"))) for item in mapped_results], [("call-0", " result 0\n"), ("call-1", " result 1\n")])
+                assistant = next(item for item in sent if item.get("role") == "assistant")
+                self.assertEqual(assistant["content"] if mode == "chat" else [part["text"] for part in assistant["content"]], "".join(texts) if mode == "chat" else texts)
+                self.assertEqual([part["text"] for part in sent[-1]["content"]], texts)
             scenario[0] = "stream-tools"
             status, events = call({"tools": tools, "stream": True})
             self.assertEqual(status, 200, events)
@@ -1066,6 +1099,7 @@ asyncio.run(main())"""
                 logs = subprocess.check_output(
                     ["docker", "logs", name], stderr=subprocess.STDOUT, text=True
                 )
+                self.assertIn("HF_GATEWAY_UNSUPPORTED_REQUEST", logs)
                 for value in (
                     "HF_SENSITIVE_REQUEST_SENTINEL",
                     "HF_SENSITIVE_UPSTREAM_SENTINEL",
@@ -1090,6 +1124,12 @@ asyncio.run(main())"""
 
     def test_responses_contract(self):
         self.check_mode("responses")
+
+    def test_chat_thinking_explicitly_disabled(self):
+        self.check_mode("chat", disable_thinking=True)
+
+    def test_responses_thinking_explicitly_disabled(self):
+        self.check_mode("responses", disable_thinking=True)
 
 
 if __name__ == "__main__":

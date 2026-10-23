@@ -34,7 +34,7 @@ docker compose -f docker-compose.yaml exec -T control-plane sh -ec 'test "$SANDB
 
 ## 可选 OpenAI 兼容模式
 
-在根 `.env` 填写 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_CHAT_MODEL`、`OPENAI_RESPONSES_MODEL`，并执行 `chmod 600 .env`。每次启动显式选择一种协议；这些命令会访问真实上游，可能产生费用：
+在根 `.env` 填写 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_CHAT_MODEL`、`OPENAI_RESPONSES_MODEL`，并执行 `chmod 600 .env`。上游默认启用thinking时，核对文档后可显式设置 `OPENAI_DISABLE_THINKING=true`，详见下方本地开发说明。每次启动显式选择一种协议；这些命令会访问真实上游，可能产生费用：
 
 ```sh
 node scripts/openai.mjs check --api chat
@@ -43,7 +43,7 @@ node scripts/openai.mjs dev --api chat
 # 另一个配置位置可加 --env-file /absolute/path/to/.env
 ```
 
-`dev` 使用独立 `harness-forge-openai` 项目；原生 Claude 和默认 Compose 拓扑不变。网关没有宿主机端口，OpenAI key 只进入网关；Runtime 继续通过 Claude Agent SDK 调用它。不自动 fallback、不替换用户指定模型，不支持的语义明确报错。完整 smoke 命令、会话切换限制和费用边界见[本地开发](docs/development/local-setup.md#openai-双协议兼容模式)。当前两模式真实全流程验收仍在进行，连通性和离线合同通过不等于完整验收。
+`dev` 使用独立 `harness-forge-openai` 项目；原生 Claude 和默认 Compose 拓扑不变。网关没有宿主机端口，OpenAI key 只进入网关；Runtime 继续通过 Claude Agent SDK 调用它。不自动 fallback、不替换用户指定模型，不支持的语义明确报错。完整 smoke 命令、会话切换限制和费用边界见[本地开发](docs/development/local-setup.md#openai-双协议兼容模式)。2026-10-24两模式各三Run/两会话的真实全流程均已通过，详见[验证记录](docs/development/verification.md#openai-双协议真实验收2026-10-24)；当前用户Responses上游仍有混合消息工具历史的顺序限制，不能理解为任意Claude请求均无损兼容。
 
 ## 测试
 
@@ -97,7 +97,7 @@ docker-compose.openai.yaml 可选 OpenAI 网关覆盖编排
 
 ## 当前进度与恢复入口
 
-原 V0 Task 1–22 已完成：同一冻结源码 `7db5334948a2f377bbf2d2dc9eed9a02a80d8d35` 已通过本机 fresh clone 与独立 Linux [CI 验收](https://github.com/Sesame2/harness-forge/actions/runs/36995155512)。新增 OpenAI 网关 Task 23–25 正在实施与验证，不属于该旧冻结快照的验收范围。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-10-02-openai-gateway.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
+原 V0 Task 1–22 已完成：同一冻结源码 `7db5334948a2f377bbf2d2dc9eed9a02a80d8d35` 已通过本机 fresh clone 与独立 Linux [CI 验收](https://github.com/Sesame2/harness-forge/actions/runs/36995155512)。新增OpenAI网关Task23–25的实现、双协议真实流程和本机回归已完成；新网关没有沿用旧CI快照冒充独立环境验证。先阅读[最新恢复 checkpoint](docs/superpowers/checkpoints/2026-10-02-openai-gateway.md)，不要重复实现已完成任务。完整历史见[连续执行记录](docs/superpowers/checkpoints/2026-09-12-full-execution.md)。
 
 - [实施计划](docs/superpowers/plans/2026-07-19-harness-forge-v0.md)
 - [OpenAI 网关中文规格](docs/superpowers/specs/2026-10-02-openai-gateway-design.md) / [实施计划](docs/superpowers/plans/2026-10-02-openai-gateway.md)

@@ -130,10 +130,12 @@ async def test_worker_ack_order_and_one_safe_terminal(tmp_path, monkeypatch, fai
         assert code == 0
         assert acknowledged == ["candidate.created", "candidate.durable"]
         assert [event.type for event in events] == [
+            "phase.changed",
             "assistant.message",
             "artifact.candidate",
             "agent.completed",
         ]
+        assert events[0].payload.model_dump() == {"phase": "agent"}
         assert "SDK diagnostic" in stderr.getvalue()
     else:
         assert code == 1
@@ -196,6 +198,7 @@ async def test_worker_manifest_and_fork_use_real_normalization(tmp_path, monkeyp
     )
     events = [json.loads(line) for line in stdout.getvalue().splitlines()]
     assert [event["type"] for event in events] == [
+        "phase.changed",
         "tool.started",
         "tool.completed",
         "artifact.candidate",

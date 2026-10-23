@@ -1,5 +1,7 @@
 model_list:
   - model_name: harness-openai
+    model_info:
+      supports_mid_conversation_system: true
     litellm_params:
       model: os.environ/HF_GATEWAY_UPSTREAM_MODEL
       api_key: os.environ/OPENAI_API_KEY

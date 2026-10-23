@@ -54,6 +54,17 @@ class CapabilityContract(unittest.TestCase):
             self.assertIsNone(self.validate(self.request, mode))
         self.assertEqual(self.request, original)
 
+    def test_inline_sdk_budget_system_text_is_preserved_and_other_shapes_rejected(self):
+        request = copy.deepcopy(self.request)
+        request["messages"].append({"role": "system", "content": " USD budget remaining: 2\n"})
+        original = copy.deepcopy(request)
+        for mode in ("chat", "responses"):
+            self.validate(request, mode)
+            for content in ("", [], [{"type": "tool_use", "id": "call", "name": "Bash", "input": {}}]):
+                with self.assertRaisesRegex(ValueError, "^HF_GATEWAY_"):
+                    self.validate({**request, "messages": [{"role": "system", "content": content}]}, mode)
+        self.assertEqual(request, original)
+
     def test_unknown_top_level_or_semantic_parameter_is_rejected(self):
         for name, value in {
             "bogus": True,
@@ -65,6 +76,7 @@ class CapabilityContract(unittest.TestCase):
             "proxy_server_request": {"body": {}},
             "user": "spoof",
             "callbacks": [],
+            "extra_body": {"thinking": {"type": "enabled"}},
             "litellm_metadata": {},
         }.items():
             with self.subTest(name=name):
@@ -119,7 +131,7 @@ class CapabilityContract(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "^HF_GATEWAY_"):
                         self.validate({**self.request, **mutation}, mode)
 
-    def test_error_tool_result_and_reordered_mixed_blocks_are_rejected(self):
+    def test_error_tool_result_is_rejected(self):
         for content in [
             [
                 {
@@ -129,10 +141,6 @@ class CapabilityContract(unittest.TestCase):
                     "is_error": True,
                 }
             ],
-            [
-                {"type": "text", "text": "before"},
-                {"type": "tool_result", "tool_use_id": "call-1", "content": "ok"},
-            ],
         ]:
             with self.subTest(content=content):
                 request = {
@@ -141,6 +149,23 @@ class CapabilityContract(unittest.TestCase):
                 }
                 with self.assertRaisesRegex(ValueError, "^HF_GATEWAY_"):
                     self.validate(request, "responses")
+
+    def test_approved_mixed_block_normalization_keeps_original_request_untouched(self):
+        request = {**self.request, "messages": [
+            {"role": "assistant", "content": [
+                {"type": "text", "text": " before\n"},
+                {"type": "tool_use", "id": "call-1", "name": "lookup", "input": {"value": None}},
+                {"type": "text", "text": " after\t"},
+            ]},
+            {"role": "user", "content": [
+                {"type": "text", "text": " reminder\n"},
+                {"type": "tool_result", "tool_use_id": "call-1", "content": "result", "is_error": False},
+            ]},
+        ]}
+        original = copy.deepcopy(request)
+        for mode in ("chat", "responses"):
+            self.validate(request, mode)
+        self.assertEqual(request, original)
 
     def test_tool_history_preserves_json_and_successful_result(self):
         self.request["messages"].extend(

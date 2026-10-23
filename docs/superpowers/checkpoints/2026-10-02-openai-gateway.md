@@ -1,6 +1,28 @@
 # 恢复记录：V0 独立 CI 与 OpenAI 兼容网关
 
-日期：2026-10-02。本文件是执行中 checkpoint，**不是全部完成声明**。
+建立日期：2026-10-02，最新验收日期：2026-10-24。已批准范围的实现、Chat/Responses真实全流程及本机回归均通过；不代表任意Claude语义无损、原生真实Claude或新网关独立CI均已验证。主分支交付状态见最新Git记录。
+
+## 2026-10-23–24 恢复与验证
+
+- 恢复起点 main/origin/实施分支均为 `7a9f135565658927fed29cc9e3b92a0b2c207823`，保留未提交的 Task25 UI smoke 代码。
+- 三轮真实 UI 编排已补齐，替身检查覆盖两会话、续聊 source/candidate、实际 ECharts 绘制、版本切换、刷新重放、计算结果 `value_sum=54` 和失败清理。诊断只输出 UUID、状态、固定错误码、事件序号/类型；launcher 已接回失败摘要。Node 70/70 通过，dataset-based ECharts 不要求显式 series.data。
+- 最新默认测试通过：Go 全包、Python288（5.79s）、Vitest108/15、Node smoke28/launcher42、网关纯校验9；production build/layout 通过。新增预算白名单反例后网关纯测试为10项且通过。
+- 已确认 SDK 的 `max_budget_usd` 会在消息历史插入非空 system 字符串。保留预算，允许此窄文本形状；Chat 使用固定转换器的 `model_info.supports_mid_conversation_system` 能力声明。实际 HTTP 合同先 RED，再两协议 GREEN（79.990s），逐项检查预算文字、角色和顺序；没有修改正常映射补丁。
+- 用户上游连通性本轮复测：Chat/Responses 均 HTTP200；模型 SHA256 前缀均 `7d963f65d1ed`，各64输出token上限。真实 key 未输出；主目录.env仍600且被Git忽略。
+- Chat 第1次真实 UI 尝试项目 `harness-forge-openai-smoke-chat-7159f0fe032c2a66f2bf455f`：Run `ed929dca-c99f-4d26-bdb6-97f533a5ef23`，Conversation `320ca4a5-3073-4cec-b824-48a62acc8d23`，模型已输出文本并开始工具调用，随后 worker_failed，未发布制品；自有 Compose 资源已清理。正在定位 SDK/Runtime 事件失败，不能记为通过。
+- 根因已在离线真实 SDK→ProcessManager 闭环复现：父进程 `model_dump()` 补入缺省的 `error=None/output=None`，重新验证时失败。两处统一改为 `exclude_none=True`；成功/失败工具结果各一个真实子进程回归先 RED 后 GREEN，且工具 input 的合法 null 保留。离线真实 SDK 已完成工具执行、制品校验和 candidate durable ACK，临时诊断已移除。
+- 修复后默认测试再次通过：Python290（9.86s）、Vitest108、Node70、网关纯测试10；Ruff/Mypy13源文件、build/layout/空 env Compose/diff check 通过。真实 PostgreSQL/MinIO 集成通过，权限测试0.68s；Fake E2E 隔离重跑5/5（21.8s）。首次并行负载下重放测试的延迟窗口被越过，4/5，保留这次失败记录，不改产品或放宽断言。
+- Runtime 镜像重装相同依赖时，下载耗时超过10分钟，启动在模型调用前超时；随后使用 BuildKit uv 包缓存，仍 frozen 安装同一 uv.lock。缓存由本机原有已验证 Runtime 镜像中的包缓存预热，非复制真实配置；本次依赖安装7秒完成，不计作全新独立环境或禁网 fresh build。
+- 旧严格顺序下 Chat 共3次真实首轮失败，修复后最后 Run `756888ca-882d-4eb7-b9c1-05879684d11d` 已成功完成两个 Bash 工具，仍未发布；Responses 第1次 Run `5711a148-19fc-4344-9831-fc75a271a509`（Conversation `2bf27173-03cf-40c8-ab21-c035ee463701`）亦完成两个 Bash 后失败，网关安全诊断为 `HF_GATEWAY_CONTENT_ORDER_UNREPRESENTABLE`。所有自有资源已清理，不能记为通过。
+- 用户已明确批准混合文本/工具块使用成熟转换器的既有顺序规范化，保留全部文本、参数、工具 ID 和结果关联，并授权新边界下 Chat/Responses 各再验收一次。已移除仅针对顺序的拒绝；thinking、未知字段、坏 JSON、未知终态、工具错误等拒绝策略保留。新合同包括交错文本与多个工具/结果，逐项核对内容、JSON 参数、ID关联；11项纯测试及双模式真实网关合同通过（83.119s）。
+- 新边界首次 Chat Run `ce118771-15ad-4ad4-be2c-f35a45a786f8`、Responses Run `b47c2567-85a8-4cbd-9b23-27a668b46f2e` 均未完成。合成工具历史直连进一步证明：上游默认 thinking 要求回放 `reasoning_content`（HTTP400）。按官方协议分别显式关闭后，两次有界64-token诊断均HTTP200且无reasoning。增加默认 false 的 `OPENAI_DISABLE_THINKING`，本机真实.env显式设true；正式 LiteLLM extra_body 接入，未新增映射补丁。launcher新增测试先 RED 后45项 GREEN；两协议实际出站 opt-in 测试先 RED 后 GREEN，完整4项网关合同98.971s通过。
+- 关闭上游 thinking 后首轮 Chat `fa93a639-d505-434f-b73a-97fdf1db1013`、Responses `5f8a506e-e88f-4bf2-a223-fe2b970d3764` 遇到真实 Bash 失败，按既定 `is_error=true` 边界明确拒绝，没有改成普通成功结果。
+- Chat `c49b8bee-8537-41af-a1cb-b1b23de30018` 完成6次工具、合法制品与agent.completed，却在Go发布前失败：真实 runner 未发 agent 阶段，Go仍在preparing，不能直接进入publishing。既有公开NDJSON/ACK回归先 RED（2失败/0.49s），在candidate.created获父进程ACK后补发一个phase.changed；runner11项GREEN（0.34s），不放宽Go状态机。后续 Chat `a85badce-9292-4b20-b45f-c3afbbde3865` 证明阶段已为agent，但8次工具后仍worker_failed；未记录SDK具体终止子类，不能把“达到8轮”写成确定根因。
+- Responses `c7a83e8a-c019-41f7-834c-14b3c587557f` 在混合说明/工具后的下一请求失败。64-token合成直连复现：成熟转换器将function_call放到assistant说明前，当前上游不接受调用与结果之间夹说明，HTTP400 `No tool output found for tool call call_probe`。这是此上游兼容限制，不是允许私自重排/剥离消息的理由；mock中完整文本/ID/参数关联合同仍通过。
+- 用户明确授权Chat在保持8轮/8192输出上限下再验收一次。批量计算/写文件的真实Chat全流程已PASS：Project `6b12b02d-d510-43d0-8bf0-bb93b33e92f5`；Conversations `d48188d7-140d-427b-b69a-1b1cac7c487d`、`517b2041-c07b-4c50-8729-9a90eff167f8`；Runs `3525db8a-e357-4d13-9043-cb2a08e256b0`、`c577570f-70c9-4039-804f-b52a2a0fa290`、`6eccccbc-8016-451c-9419-df2429beca4d`，均succeeded/finalized；主HTML Artifacts `d089aefc-3b83-40fd-9f3e-d7f20b754257`、`f6e05354-839d-45cb-9d08-38e6085580cb`、`f25b1aaa-88bf-4039-838b-b2e29207d8d6`。计算4行、value_sum54、SDK续聊与独立会话、实际ECharts绘制、版本1→2→1、刷新重放均通过。执行代理已查看成功截图 `/var/folders/4n/zbmjjsld3273sjlx1d6fwhp80000gn/T/hf-openai-smoke-6eccccbc-8016-451c-9419-df2429beca4d.png`，自有资源已清理。
+- 最终Responses项目 `harness-forge-openai-smoke-responses-ef869bcc91bf676a7b1825f3` 已PASS：Project `4687e625-c672-4ba9-8ca8-6f245595a022`；Conversations `03e23e2d-6fe5-420a-afac-9333076bdede`、`bbda49ee-c664-4608-9302-c7ee235a076e`；Runs `2773f190-5de9-4150-bd6f-edbabc135910`、`1145db1b-1830-4ef9-98f3-c2dbddc77457`、`815593f0-c040-4764-ad0b-7478a404f56e` 均succeeded/finalized；主HTML `d6870690-9e74-484e-b3ba-97e5d0f62827`、`4f89d2b2-155b-4b89-a772-841d48f55595`、`cd996d36-ae5a-45b5-9e93-3396cce7540a`。通过项与Chat相同，使用批量写文件/工具期间不附说明提示。执行代理已查看 `/var/folders/4n/zbmjjsld3273sjlx1d6fwhp80000gn/T/hf-openai-smoke-815593f0-c040-4764-ad0b-7478a404f56e.png`；自有资源清理完成。
+- 最终本机回归：Go全包/Python290（7.27s）/Vitest108/Node73/纯校验11、Ruff/Mypy13源文件、build/layout/空env Compose/diff check通过。真实PostgreSQL/MinIO integration重新实际执行且通过（权限0.58s，无skip/cache）；Fake浏览器E2E5/5（23.5s）；最终真实固定网关→本地mock合同4项通过（98.070s），含默认不注入及显式关闭thinking的实际出站反例。新网关没有新增独立CI证据。
+- 最终按容器/卷/网络复查 `harness-forge-openai-smoke-*`、integration、e2e及gateway-contract归属，均无残留；既有开发资源未删除。`.env`仍600、在主目录Git忽略且未跟踪；实现树无临时诊断插桩。最终主代理自查覆盖规格、相关调用者、默认行为、错误保真及秘密边界；本轮没有另起独立审查代理，不把历史Task24审查表述为本轮独立审查。
 
 ## 用户确认与安全边界
 
@@ -8,7 +30,7 @@
 - 用户已确认受限核心能力保真、不可等价能力明确报错、不静默降级、保留原生 Claude；已确认 [中文规格](../specs/2026-10-02-openai-gateway-design.md)，继续实施及真实全流程验证。
 - 用户在主目录 `/Users/mei/Desktop/Project/harness-forge/.env` 填写上游配置，授权实际调用。文件权限 600、Git 忽略；不得打印/提交/复制进镜像或自动 CI。研究和代码审查 agent 均不读该文件。
 - 父级使用 Node 原生 parseEnv 加载本地文件，只向用户指定 HTTPS 地址请求。两次直连使用合成短提示、各限制 64 输出 token：`/v1/chat/completions` HTTP 200、有效 choices 和文本，`/v1/responses` HTTP 200、有效 output 和文本。根 Base URL 自动补 `/v1`。
-- 上述只证明连通性，不证明网关转换、工具循环、会话或制品通过；目前尚未运行经网关的真实全流程。
+- 上述只证明连通性，不证明网关转换、工具循环、会话或制品通过；最新真实尝试及结果见本页2026-10-23恢复记录。
 
 ## Git 与恢复入口
 
@@ -59,15 +81,15 @@
 - raw-request 必须从正式 custom_auth 的 FastAPI Request 读取；pre-call 的 proxy_server_request.body 已经被清洗，不能作为原始白名单信任边界。
 - Task23 合同已经实现，父级最新独立 `make test-gateway` PASS：9 个纯校验测试、Chat/Responses 两套真实固定网关→本地 mock 合同（73.947s）；不是模型替身绕开转换器。覆盖出站协议/鉴权、system/text/工具/历史、流式 JSON、真实 usage、状态/坏输出/截断/错误脱敏、30s 超时及实际 socket 取消，合同容器已清理。该次 arm64 镜像 ID 为 `sha256:e43047224f54fb9b20108be64942b353bc9e82a394f3118d6644657378245b5c`；BuildKit attestation 会使重建的本地 index ID 改变，基底固定 digest 与源 hash 不变。
 - 质量复审以固定镜像无网络探针另发现 3 个转换后 hook 看不到的丢失：Chat 非流式自动补坏 JSON/空串→对象、`call.1` 与 `call:1` 均归一化为 `call_1`、音频伴随文本时音频被丢。已补真实 HTTP RED（7 项失败）→GREEN，复用 SDK 原始 Chat 解析前检查点统一拒绝；流式 JSON 分片、合法 `{}` 仍通过。
-- Responses reasoning 无法保留原 ID，明确拒绝所有 reasoning，不 strip-and-retry；`disable_parallel_tool_use` 亦明确拒绝。实际文本合同确认 Responses 的多个 system 文本块会插入换行连接，块内原字符串和次序不变；Chat assistant 多文本块直接连接。已异步询问用户是否接受这项显式格式规范化，尚未收到答复；不能写成整段字节不变。
+- Responses reasoning 无法保留原 ID，明确拒绝所有 reasoning，不 strip-and-retry；`disable_parallel_tool_use` 亦明确拒绝。Responses 多 system 文本块换行连接、Chat assistant 多文本块直接连接的格式边界已写入规格；不能写成请求整段字节不变。2026-10-23 用户另明确批准混合文本/工具块顺序规范化，最新验收按该规格执行。
 - Task24a Runtime 实现已通过独立规格和质量审查，父级完整复验 Python 288/288（5.04s）、Ruff、Mypy 13 源文件和 diff check。配置为 `HF_MODEL_BACKEND`、`HF_GATEWAY_URL/KEY`、`HF_OPENAI_BASE_URL/MODEL`；`CLAUDE_CONFIG_DIR` 始终是原始根，普通 property 派生 `.harness-backends/<sha256>`，密钥轮换不改变目录。
 - 已以实际 spawn/子进程 ACK 验证父进程、worker 与 SDK 使用同一路径，并验证兼容模式清理继承凭证、显式 SDK 参数和直接 settings 注入的 gateway key 脱敏。native 默认不变；启动在 recover 前检查路由标记，有未 finalize execution 时禁止切换。跨路由 purge 的忙碌、无目标 fsync、删除后 fsync 重试、失踪已枚举目录和 symlink 均明确失败或按合同完成。
 - 质量审查另用真实 `RLIMIT_FSIZE=32` 复现 64 字节身份标记短写却成功替换；已补最小长度检查及真实短写回归，失败保留旧 marker、清理临时文件。没有新增存储抽象或 wire 字段。
 - Task24b 部署 launcher、可选 Compose overlay、env 模板和中文操作说明已通过独立规格/质量审查；父级 launcher 41/41（0.917s）、完整默认测试（Python288/Vitest108/原 smoke17/网关纯9）、build/layout/diff check、空 env Compose 及两模式假凭证隔离检查通过。OpenAI key 仅进入 gateway，browser 子进程没有模型凭证，生产 gateway 无 host port。真实 key 已准备，不需用户再次提供。
 - 审查复现同时启动同协议 smoke 时固定项目名会互删卷；已使用每次 24 位随机后缀项目名，实际 launcher 边界并发测试 RED→GREEN，启动与 finally 清理绑定同一 own project。端口仍固定，冲突时明确失败但不能清理其他运行。dev 项目保持稳定。
-- Task25 正在扩展既有 runSmoke 的 fullUI 模式，尚未运行两协议真实 UI/Agent/工具/制品闭环。launcher 已有三 Run/两会话 UUID 证据门，不接受旧单轮函数的 undefined 结果；下一步先完成离线编排测试和审查，再显式读取主目录 .env 运行 Chat、Responses。
+- Task25 已扩展既有 runSmoke 的 fullUI 模式，launcher有三Run/两会话UUID证据门，不接受旧单轮函数的undefined结果；已执行两模式真实尝试，当前通过项和失败证据见本页2026-10-23–24记录，不把连通性或mock算成真实通过。
 - 固定 SDK 为 0.2.120，bundled CLI 2.1.211。无凭证、禁止外网的本地 mock 探针证实：显式 `model=harness-openai`、`thinking={type: disabled}` 配合 `DISABLE_PROMPT_CACHING=1`、`CLAUDE_CODE_EFFORT_LEVEL=unset`、`DISABLE_INTERLEAVED_THINKING=1` 可发出不含 thinking/output_config/cache_control 的真实请求；仅关闭 thinking 仍会携带默认 effort，不能省略对应 env。上述配置已由 Task24a 接入。
 - 固定 CLI 只读审计所需的 `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`、`CLAUDE_CODE_MAX_RETRIES=0`、`CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1`、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 及 cache/effort/interleaved thinking/实验 beta 关闭配置均已接入；Haiku/Sonnet/Opus alias 为 `harness-openai`，不设置 Fable alias。兼容 spawn 先清除继承的 `ANTHROPIC_*`、`CLAUDE_CODE_*`、`OPENAI_*` 再注入明确环境。普通 retry 关闭不等于总 HTTP 只调用一次：独立 stream/watchdog 仍可能重试，真实 smoke 仍需 120s/max_turns/输出界限。
 - 原审计复现的旧 A 路由 transcript 在切到 B 后 DELETE 虚假返回 204 的问题，已由 Task24a 修复并通过回归；仅 DELETE 跨路由，HEAD、续聊、finalize 仍只访问当前 active 根，busy 或 fsync 失败继续 fail closed。
 
-恢复时先检查 Git 与运行中测试资源，读取上述计划/规格和最新 checkpoint。原 V0 镜像分发及 pnpm 漂移已修复并通过同 SHA 两环境验收；继续收口 Task23 审查和 system block 边界，完成 Task24 Runtime/部署接入及 Task25 两协议真实全流程。120s 是 smoke 的单轮轮询/取消界限，不是现有 Runtime 的自动执行 deadline。不得将已有直连连通性、mock 合同或 Fake E2E 记成真实网关/Agent 成功。
+恢复时先检查Git与运行中测试资源，读取上述计划/规格和本页最新日期记录。Task23/24已落地；剩余工作以Task25未勾选闸门和最新真实结果为准，不重做已通过项目。120s是smoke的单轮轮询/取消界限，不是现有Runtime的自动执行deadline。不得将已有直连连通性、mock合同或Fake E2E记成真实网关/Agent成功。

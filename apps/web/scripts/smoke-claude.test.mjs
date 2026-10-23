@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import { runSmoke } from './smoke-claude.mjs'
 
@@ -20,7 +21,7 @@ function fixture(options = {}) {
   let cancelled = false
   let wonByCompletion = false
   const calls = [], logs = [], browserEvents = {}
-  const run = () => ({ id: 'run-1', status: wonByCompletion ? 'succeeded' : cancelled ? 'cancelled' : (options.status ?? 'succeeded'), finalized_at: options.finalizeAfter !== undefined && time >= options.finalizeAfter ? 'now' : cancelled ? (options.neverFinalize ? null : 'now') : (options.status === 'running' || options.unfinalized ? null : 'now') })
+  const run = () => ({ id: 'run-1', status: wonByCompletion ? 'succeeded' : cancelled ? 'cancelled' : (options.status ?? 'succeeded'), finalized_at: options.finalizeAfter !== undefined && time >= options.finalizeAfter ? 'now' : cancelled ? (options.neverFinalize ? null : 'now') : (options.status === 'running' || options.unfinalized ? null : 'now'), ...options.runExtras })
   const fetch = async (url, init = {}) => {
     const path = new URL(url).pathname
     const method = init.method ?? 'GET'
@@ -194,4 +195,168 @@ test('Make smoke holds docker provider through cleanup and preserves original fa
 test('echoing the word python is not evidence of Python execution', async () => {
   const f = fixture({ events: [events[0], { ...events[1], payload: { ...events[1].payload, input: { command: 'echo python' } } }, events[2]] })
   await assert.rejects(runSmoke(f.args), /Python/)
+})
+
+test('failure diagnostics never include private Run metadata, error messages or event payloads', async () => {
+  const f = fixture({ status: 'failed', runExtras: { prompt: 'PRIVATE_SENTINEL', error: { code: 'worker_failed', message: 'PRIVATE_SENTINEL' } },
+    events: [{ sequence: 1, type: 'agent.failed', payload: { command: 'PRIVATE_SENTINEL', message: 'PRIVATE_SENTINEL' } }] })
+  await assert.rejects(runSmoke(f.args), /Run failed/)
+  assert(f.logs.some((line) => line.startsWith('Run:') && line.includes('worker_failed')))
+  assert(f.logs.some((line) => line.startsWith('Events:') && line.includes('agent.failed')))
+  assert.doesNotMatch(f.logs.join('\n'), /PRIVATE_SENTINEL|"payload"|"prompt"|"command"/)
+})
+
+const uuid = (number) => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`
+const fullCSV = await readFile(new URL('../../../tests/fixtures/geo/locations.csv', import.meta.url))
+const fullDigest = createHash('sha256').update(fullCSV).digest('hex')
+
+function uiFixture(options = {}) {
+  let time = 0, currentConversation, selected, reloaded = false, waiter, text = ''
+  const calls = [], logs = [], conversations = [], runs = [], screenshots = [], browserEvents = {}
+  const eventLog = (id) => events.map((event, index) => ({ ...event, run_id: id, sequence: index + 1 }))
+  const visibleRuns = () => runs.filter((run) => run.conversation_id === currentConversation)
+  const selectedRun = () => selected ?? visibleRuns().at(-1)?.id
+  const reportURL = (id) => `http://localhost:8081/artifacts/${uuid(100 + runs.findIndex((run) => run.id === id))}/report/index.html`
+  const createRun = () => {
+    const index = runs.length
+    assert(runs.every((run) => run.finalized_at), 'next run submitted before prior finalization')
+    const value = { id: uuid(20 + index), conversation_id: currentConversation, status: 'queued', phase: 'agent', finalized_at: null,
+      candidate_sdk_session_id: uuid(30 + index), source_sdk_session_id: index === 1 ? runs[0].candidate_sdk_session_id : null }
+    if (options.wrongSource && index === 1) value.source_sdk_session_id = uuid(999)
+    runs.push(value)
+    selected = undefined
+    return { run: { ...value }, message: { id: uuid(50 + index) } }
+  }
+  const mutate = (path, kind) => {
+    let body
+    if (kind === 'project') body = { id: uuid(1) }
+    if (kind === 'input') body = { id: uuid(2), sha256_digest: fullDigest }
+    if (kind === 'conversation') {
+      const conversation = { id: uuid(10 + conversations.length), active_sdk_session_id: null }
+      conversations.push(conversation); currentConversation = conversation.id; selected = undefined; body = conversation
+    }
+    if (kind === 'message') body = createRun()
+    calls.push(['UI_POST', path])
+    const response = { status: () => 201, json: async () => structuredClone(body), url: () => `http://localhost:5173${path}`, request: () => ({ method: () => 'POST' }) }
+    assert(waiter?.predicate(response), `unexpected UI response ${path}`)
+    waiter.resolve(response); waiter = undefined
+  }
+  const locate = (selector) => ({
+    async fill(value) { calls.push(['FILL', selector, value]); text = value },
+    async click() {
+      calls.push(['CLICK', selector])
+      if (selector === 'dialog button[type=submit]') mutate('/api/v1/projects', 'project')
+      if (selector === 'button:新建会话') mutate(`/api/v1/projects/${uuid(1)}/conversations`, 'conversation')
+      if (selector === '#chat-pane button[type=submit]') {
+        assert(!text.includes('54'), 'prompt must not disclose expected calculation')
+        mutate(`/api/v1/conversations/${currentConversation}/messages`, 'message')
+      }
+      if (selector.startsWith('a[href=')) { currentConversation = selector.match(/conversations\/([^"]+)/)[1]; selected = undefined }
+    },
+    async setInputFiles(file) {
+      assert.deepEqual(file.buffer, fullCSV)
+      assert.equal(file.name, 'locations.csv')
+      mutate(`/api/v1/projects/${uuid(1)}/inputs`, 'input')
+    },
+    async waitFor() { if (options.projectUIFailure && selector === 'button:新建会话') throw new Error('PRIVATE_SENTINEL') },
+    async selectOption(id) { calls.push(['SELECT', id]); if (!options.wrongVersion) selected = id },
+    async getAttribute() { return reportURL(selectedRun()) },
+    async elementHandle() { return { contentFrame: async () => frame } },
+  })
+  const chartElement = { getBoundingClientRect: () => ({ width: 640, height: 480 }), querySelector: () => ({ getBoundingClientRect: () => ({ width: 640, height: 480 }) }) }
+  const chart = { getOption: () => ({ series: [options.datasetChart ? { type: 'bar', datasetIndex: 0 } : { data: [12, 18, 9, 15] }] }), getWidth: () => 640, getHeight: () => 480,
+    getZr: () => ({ storage: { getDisplayList: () => ['painted'] } }) }
+  const frame = {
+    async waitForFunction(fn, arg) {
+      const okay = runInNewContext(`(${fn.toString()})(arg)`, { arg, window: { echarts: options.chartStub ? {} : { getInstanceByDom: () => chart } },
+        document: { body: { textContent: 'Report' }, querySelectorAll: () => [chartElement] } })
+      if (!okay) throw new Error('fixture chart did not render')
+    },
+  }
+  const page = {
+    on(name, handler) { browserEvents[name] = handler },
+    setDefaultTimeout() {},
+    async goto(url) { calls.push(['GOTO', url]); return { ok: () => true } },
+    locator: locate,
+    getByRole: (role, { name }) => locate(`${role}:${name}`),
+    getByLabel: (name) => locate(`label:${name}`),
+    waitForResponse(predicate) { assert(!waiter); return new Promise((resolve) => { waiter = { predicate, resolve } }) },
+    async waitForFunction(fn, arg) {
+      const applied = new Map(visibleRuns().map((run) => [run.id, eventLog(run.id).slice(options.replayGap && reloaded ? 1 : 0)]))
+      const doc = {
+        querySelector(selector) {
+          if (selector === '#app') return { __vue_app__: { config: { globalProperties: { $pinia: { _s: new Map([['runs', { events: applied }]]) } } } } }
+          if (selector === '#artifact-pane iframe') return { getAttribute: () => reportURL(selectedRun()) }
+          return null
+        },
+        querySelectorAll(selector) {
+          if (selector === '[data-run-id]') return visibleRuns().map((run) => ({ getAttribute: () => run.id }))
+          if (selector.includes('option')) return visibleRuns().map((run) => ({ value: run.id }))
+          return []
+        },
+      }
+      if (!runInNewContext(`(${fn.toString()})(arg)`, { arg, document: doc })) throw new Error('fixture UI condition failed')
+    },
+    async reload() { reloaded = true; if (options.refreshVersion) selected = undefined; calls.push(['RELOAD']) },
+    async screenshot({ path }) { screenshots.push(path) },
+  }
+  const fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname, method = init.method ?? 'GET'
+    calls.push([method, path])
+    if (method === 'DELETE') return new Response(null, { status: 204 })
+    assert.equal(method, 'GET', 'full UI mutations must pass through actual browser controls')
+    let body
+    const run = runs.find((run) => path.includes(run.id))
+    if (path.endsWith('/events')) body = eventLog(run.id)
+    else if (path.endsWith('/artifacts')) body = [
+      { id: uuid(100 + runs.indexOf(run)), run_id: run.id, is_primary: true, type: 'html', entry_path: 'report/index.html', gateway_url: reportURL(run.id) },
+      { id: uuid(200 + runs.indexOf(run)), run_id: run.id, is_primary: false, type: 'data', entry_path: 'data/analysis-evidence.json', gateway_url: `http://localhost:8081/artifacts/${uuid(200 + runs.indexOf(run))}/data/analysis-evidence.json` },
+    ]
+    else if (path.endsWith('/analysis-evidence.json')) body = { inputs: [{ input_digest: fullDigest, row_count: 4, computed_fields: { value_sum: options.wrongSum ? 0 : 54 } }] }
+    else if (run) {
+      run.status = options.failureAt === runs.indexOf(run) ? 'failed' : 'succeeded'
+      if (time > runs.indexOf(run) * 1000) run.finalized_at = '2026-10-02T10:00:00Z'
+      if (run.finalized_at && run.status === 'succeeded') conversations.find((item) => item.id === run.conversation_id).active_sdk_session_id = run.candidate_sdk_session_id
+      body = run
+    } else if (path.includes('/conversations/')) body = conversations.find((item) => path.endsWith(item.id))
+    else throw new Error(`unexpected fixture GET ${path}`)
+    return Response.json(body)
+  }
+  return { calls, logs, runs, conversations, screenshots, args: { fullUI: true, webURL: 'http://localhost:5173', fetch, csv: fullCSV,
+    chromium: { launch: async () => ({ newPage: async () => page, close: async () => calls.push(['CLOSE']) }) },
+    now: () => time, sleep: async (ms) => { time += ms }, log: (line) => logs.push(line) } }
+}
+
+test('full UI smoke creates, uploads and sends three runs through controls, verifies lineage and replay', async () => {
+  const f = uiFixture()
+  const result = await runSmoke(f.args)
+  assert.deepEqual(result, { project_id: uuid(1), conversation_ids: [uuid(10), uuid(11)], run_ids: [uuid(20), uuid(21), uuid(22)], artifact_ids: [uuid(100), uuid(101), uuid(102)] })
+  assert.equal(f.calls.filter(([method, path]) => method === 'UI_POST' && path.endsWith('/messages')).length, 3)
+  assert(f.calls.some(([method]) => method === 'RELOAD'))
+  assert.deepEqual(f.calls.filter(([method]) => method === 'SELECT').slice(0, 3).map(([, id]) => id), [uuid(20), uuid(21), uuid(20)])
+  assert.equal(f.screenshots.length, 1)
+  assert(f.screenshots[0].endsWith(`hf-openai-smoke-${uuid(22)}.png`))
+  assert(f.calls.some(([method, path]) => method === 'DELETE' && path.endsWith(uuid(1))))
+})
+
+test('full UI accepts a rendered dataset-based ECharts report', async () => {
+  const f = uiFixture({ datasetChart: true })
+  assert.equal((await runSmoke(f.args)).run_ids.length, 3)
+})
+
+for (const [option, count] of [['failureAt', 2], ['wrongSource', 2], ['wrongSum', 1], ['chartStub', 1], ['wrongVersion', 2], ['refreshVersion', 2], ['replayGap', 2]]) {
+  test(`full UI ${option} fails before unnecessary paid runs and still deletes project`, async () => {
+    const f = uiFixture({ [option]: option === 'failureAt' ? 1 : true })
+    await assert.rejects(runSmoke(f.args))
+    assert.equal(f.runs.length, count)
+    assert(f.calls.some(([method, path]) => method === 'DELETE' && path.endsWith(uuid(1))))
+    assert(!f.logs.some((line) => line.includes('Smoke passed')))
+  })
+}
+
+test('project ID is retained for cleanup if a later UI assertion fails', async () => {
+  const f = uiFixture({ projectUIFailure: true })
+  await assert.rejects(runSmoke(f.args))
+  assert(f.calls.some(([method, path]) => method === 'DELETE' && path.endsWith(uuid(1))))
+  assert.doesNotMatch(f.logs.join('\n'), /PRIVATE_SENTINEL/)
 })

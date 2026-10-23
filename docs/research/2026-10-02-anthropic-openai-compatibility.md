@@ -6,6 +6,14 @@
 
 ## 结论
 
+### 2026-10-23 真实上游 thinking 补充
+
+执行代理在用户已授权的合成工具历史诊断中，Chat/Responses 均得到 HTTP400；Chat 的安全核查确认上游要求在 thinking 模式回传 `reasoning_content`。模型只记录哈希 `7d963f65d1ed`，不记录真实 URL/key。关闭 SDK thinking 不代表关闭第三方上游默认 thinking。
+
+[DeepSeek 官方 thinking 文档](https://api-docs.deepseek.com/guides/thinking_mode/) 明确区分协议：Chat 使用 `thinking.type=disabled`，Responses 使用 `reasoning.effort=none`；默认 thinking 下的工具历史必须回放 reasoning。[OpenAI 官方 reasoning 文档](https://developers.openai.com/api/docs/guides/reasoning) 亦说明 effort 值支持依模型而异，不能给所有模型强加 none。
+
+显式带上述开关的两次实际合成工具历史诊断均 HTTP200、有文本且无 reasoning（各最多64输出tokens，无重试）。因此通过默认 false、显式 opt-in 的 `OPENAI_DISABLE_THINKING` 配置解决当前非思考子集接入；使用 LiteLLM 正式 `extra_body`，不增加映射补丁，不伪造空 reasoning，也不 strip-and-retry。完整 UI 验收结果单独记在 checkpoint，不由这两个诊断替代。
+
 成熟网关能提供这一方向的兼容，但本次没有发现能对任意 Anthropic 请求、任意 OpenAI 兼容上游保证“全字段、全语义无损”的方案。工具错误标记、显式缓存控制、签名与加密推理、推理预算、服务器工具和上下文管理都存在不能直接等价映射的内容。不能把 HTTP 200、客户端可启动或一次聊天成功当成无损证明。
 
 用户已确认首批边界：**文本、流式、本地 function 工具和多轮上下文保真；无法等价转换的内容显式报错，不静默丢弃；保留原生 Claude 模式。**图像、document、服务器工具、原生 Anthropic thinking/signature/cache_control 不进入首批允许集合。上传 CSV 是沙箱文件输入，不要求模型 API 接收 image/document block。

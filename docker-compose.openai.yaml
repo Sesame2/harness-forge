@@ -6,6 +6,7 @@ services:
     command: ["--config", "/app/gateway/config-${HF_GATEWAY_MODE:-chat}.yaml", "--port", "4000"]
     environment:
       HF_GATEWAY_MODE: ${HF_GATEWAY_MODE:-chat}
+      HF_GATEWAY_DISABLE_THINKING: ${HF_GATEWAY_DISABLE_THINKING:-false}
       HF_GATEWAY_UPSTREAM_MODEL: ${HF_GATEWAY_UPSTREAM_MODEL:-openai/unconfigured}
       HF_GATEWAY_KEY: ${HF_GATEWAY_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

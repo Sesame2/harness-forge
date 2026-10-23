@@ -33,6 +33,7 @@ Chat 模式打开 `use_chat_completions_url_for_anthropic_messages`，拒绝可�
 
 - 项目根 `.env` 已被 Git 忽略且权限为 600；只提交无密钥的 `.env.example`。
 - 用户配置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_CHAT_MODEL`、`OPENAI_RESPONSES_MODEL`。根地址自动补 `/v1`，已有路径不重复附加；拒绝带用户名、密码、query、fragment 的地址。真实外部请求使用 HTTPS。
+- 2026-10-23 实测上游默认 thinking 会要求回放 `reasoning_content`。增加默认 false 的显式 `OPENAI_DISABLE_THINKING=true/false`：仅由部署配置选择，Chat 通过 LiteLLM 正式 extra_body 发送 `thinking.type=disabled`，Responses 发送 `reasoning.effort=none`。只适用于支持这些开关的上游，不按模型名探测、不补造推理、不静默降级；check 与实际调用保持一致。
 - OpenAI key 只进入网关，Agent Runtime 只得到网关访问凭证、地址和路由模型别名。默认测试不读取真实 `.env`，不接真实模型。
 - SDK 显式设置模型，并在兼容模式关闭 Anthropic prompt caching、native thinking 和无关网络流量；保留原有工具权限、隔离配置、fork/commit/abort。
 - 兼容模式的 Claude session 目录按协议、上游地址、模型的非秘密指纹隔离；父进程 SessionStore 与 runner/SDK 必须使用同一路径。恢复时找不到对应来源必须失败，不能跨路由静默续聊；原生 Claude 路径保持不变。切换部署模式不迁移原生或其他模型的 transcript；旧路由仍有未 finalize execution 时拒绝切换，不能在新目录接管旧候选的 commit/abort。
@@ -43,7 +44,9 @@ Chat 模式打开 `use_chat_completions_url_for_anthropic_messages`，拒绝可�
 
 首批范围是地理分析所需的文本与本地 function 工具，CSV/GeoJSON 是沙箱输入文件，不是模型多模态输入。
 
-允许 system/user/assistant 文本、成功的 tool result、tool use 的 name/ID/JSON 参数、工具 schema、流式或非流式、多工具及多轮历史。必须保留文本空白、内容次序、调用关联和参数值。若固定转换器会重排某种混合文本/工具 block 且无法保真，该结构必须在转换前拒绝，不能编写补偿转换器。`is_error=true` 没有等价字段时明确失败，不假装普通成功结果。
+允许 system/user/assistant 文本、成功的 tool result、tool use 的 name/ID/JSON 参数、工具 schema、流式或非流式、多工具及多轮历史。必须保留所有文本及其空白、同类内容的相对次序、调用关联和参数值。用户于 2026-10-23 明确批准：混合文本与工具块可以使用固定 LiteLLM 的既有顺序规范化，不要求跨种类块的位置相同；不编写补偿转换器。Chat 将 assistant 文本连接并保留 tool_calls，Responses 将 function call 放在 assistant 文本之前；两者将 tool result 放在同条 user 文本之前。`is_error=true` 没有等价字段时仍明确失败，不假装普通成功结果。
+
+具体格式边界：Responses 将多个顶层 system 文本块按顺序以换行分隔，每个块的原字符串保持不变；这是块边界规范化，不承诺跨协议请求 JSON 的整段字节相同。SDK 的美元预算会另在历史中插入非空 system 字符串；该窄形状保留原角色、原字符串和原位置，Chat 显式声明成熟转换器的 mid-conversation system 能力，合同失败时不能退化为 user 角色。预算提醒不表示已获得第三方上游的精确费用上限。
 
 拒绝原生 Anthropic thinking/signature、显式缓存控制、image/document/未知内容块、服务器工具、无法支持的 stop/top_k/上下文管理及未知语义字段。`thinking: disabled` 等明确关闭状态允许；不把“字段不认识”处理成忽略。实现前以固定 SDK 真实请求确认所需字段白名单，不能以放宽校验掩盖差异。
 

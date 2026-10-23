@@ -100,6 +100,14 @@ if mode == "missing_artifact": emit(1, "agent.completed", {"candidate_sdk_sessio
 emit(1, "assistant.message", {"text": "hello"})
 if mode == "backend": emit(2, "assistant.message", {"text": settings.hf_gateway_key})
 if mode == "bad_sequence": emit(1, "assistant.message", {"text":"duplicate sequence"})
+if mode in {"tool_success", "tool_failure"}:
+    emit(2, "tool.started", {"tool_call_id":"call", "name":"Bash", "input":{"value":None}})
+    payload = {"tool_call_id":"call", "name":"Bash", "outcome":"succeeded" if mode == "tool_success" else "failed"}
+    payload["output" if mode == "tool_success" else "error"] = "synthetic"
+    emit(3, "tool.completed", payload)
+    emit(4, "artifact.candidate", {"artifacts": []})
+    emit(5, "agent.completed", {"candidate_sdk_session_id":candidate, "artifacts":[]})
+    sys.exit(0)
 if mode == "redact":
     emit(2, "tool.started", {"tool_call_id":"read", "name":"Read", "input":{"nested":{"text":"TOKEN=fake-value", "value":os.environ["ANTHROPIC_API_KEY"], "token":"fixture-sensitive-token", "access_token":"fixture-sensitive-access"}}})
     print("Authorization: Bearer fake-bearer", file=sys.stderr, flush=True)
@@ -145,6 +153,25 @@ async def manager_fixture(tmp_path):
     sessions = SessionStore(settings.claude_config_dir)
     manager = module.ProcessManager(store, sessions, settings)
     return module, turn, store, manager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["tool_success", "tool_failure"])
+async def test_tool_completion_survives_parent_validation_without_null_optional_fields(tmp_path, monkeypatch, mode):
+    module, turn, store, manager = await manager_fixture(tmp_path)
+    fixture_popen(monkeypatch, module, mode)
+    handle = await manager.start(turn)
+    try:
+        events = [json.loads(line) async for line in manager.stream(handle)]
+        assert events[-1]["type"] == "agent.completed"
+        started = next(event["payload"] for event in events if event["type"] == "tool.started")
+        assert started["input"] == {"value": None}
+        completed = next(event["payload"] for event in events if event["type"] == "tool.completed")
+        field = "output" if mode == "tool_success" else "error"
+        assert completed[field] == "synthetic"
+        assert ("error" if field == "output" else "output") not in completed
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio

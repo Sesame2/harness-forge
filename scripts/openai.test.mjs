@@ -22,13 +22,13 @@ function fixture(overrides = {}) {
       COMPOSE_FILE: '/foreign.yml', COMPOSE_ENV_FILES: '/foreign.env', COMPOSE_PROJECT_NAME: 'foreign',
       OPENAI_API_KEY: 'foreign-key', ANTHROPIC_API_KEY: 'foreign-claude',
       DATABASE_URL: 'foreign-db', MINIO_ENDPOINT: 'http://foreign', SANDBOX_PROVIDER: 'fake',
-      HF_GATEWAY_KEY: 'foreign-gateway', NODE_OPTIONS: '--require=/foreign.js' },
+      HF_GATEWAY_KEY: 'foreign-gateway', OPENAI_DISABLE_THINKING: 'true', HF_GATEWAY_DISABLE_THINKING: 'true', NODE_OPTIONS: '--require=/foreign.js' },
     readFile: async (path) => { reads.push(path); return dotenv },
     fetch: async (url, init) => { calls.push({ command: 'fetch', url, init }); return Response.json({
       status: 'completed', choices: [{ message: { content: 'fixture-answer' } }],
       output: [{ type: 'message', content: [{ type: 'output_text', text: 'fixture-answer' }] }],
     }) },
-    run: async (command, args, options) => { calls.push({ command, args, options }); return command === process.execPath ? JSON.stringify(evidence) : '' },
+    run: async (command, args, options) => { calls.push({ command, args, options }); return command === process.execPath ? JSON.stringify({ result: evidence, diagnostics: [] }) : '' },
     smokeRunner: async (options) => { smoke.push(options); return evidence },
     log: (line) => logs.push(line), ...overrides,
   } }
@@ -37,6 +37,15 @@ function fixture(overrides = {}) {
 test('launcher entry point exists', () => assert.equal(typeof runOpenAI, 'function'))
 
 for (const api of ['chat', 'responses']) {
+  test(`${api} explicitly disables upstream thinking in both checks and deployments`, async () => {
+    const f = fixture({ readFile: async () => dotenv + 'OPENAI_DISABLE_THINKING=true\n' })
+    await runOpenAI(['check', '--api', api], f.options)
+    const body = JSON.parse(f.calls[0].init.body)
+    assert.deepEqual(body[api === 'chat' ? 'thinking' : 'reasoning'], api === 'chat' ? { type: 'disabled' } : { effort: 'none' })
+    await runOpenAI(['smoke', '--api', api], f.options)
+    assert.equal(f.calls.find(({ args }) => args?.includes('up')).options.env.HF_GATEWAY_DISABLE_THINKING, 'true')
+  })
+
   test(`${api} check uses exactly the selected endpoint/model, bounded output and safe summary`, async () => {
     const f = fixture()
     await runOpenAI(['check', '--api', api, '--env-file', '/fixture/config.env'], f.options)
@@ -52,11 +61,21 @@ for (const api of ['chat', 'responses']) {
     assert.equal(body.model, `${api}-fixture`)
     assert.equal(body.store, false)
     assert.equal(body.stream, false)
+    assert.equal(body.thinking, undefined)
+    assert.equal(body.reasoning, undefined)
     assert.equal(body[api === 'chat' ? 'max_completion_tokens' : 'max_output_tokens'], 64)
     assert.match(f.logs.join(' '), new RegExp(`mode=${api} status=200 model_sha256=${createHash('sha256').update(`${api}-fixture`).digest('hex').slice(0, 12)}`))
     assert.doesNotMatch(f.logs.join(' '), /fixture-secret|fixture-answer|api\.example|chat-fixture|responses-fixture/)
   })
 }
+
+test('upstream thinking switch rejects ambiguous values before external I/O', async () => {
+  for (const value of ['1', 'yes', 'TRUE', 'arbitrary-secret']) {
+    const f = fixture({ readFile: async () => dotenv + `OPENAI_DISABLE_THINKING=${value}\n` })
+    await assert.rejects(runOpenAI(['check', '--api', 'chat'], f.options), { message: 'HF_OPENAI_CONFIG' })
+    assert.deepEqual(f.calls, [])
+  }
+})
 
 test('existing URL prefix and dotenv literal values are preserved; only selected model is required', async () => {
   const f = fixture({ readFile: async () => 'OPENAI_API_KEY="literal-$(touch /tmp/no)-key"\nOPENAI_BASE_URL=https://api.example/proxy/openai///\nOPENAI_RESPONSES_MODEL=only-responses\n' })
@@ -125,6 +144,7 @@ for (const [api, webPort, apiPort] of [['chat', 45173, 48080], ['responses', 551
     assert.equal(env.HF_GATEWAY_URL, 'http://model-gateway:4000')
     assert.match(env.HF_GATEWAY_KEY, /^sk-hf-[0-9a-f]{64}$/)
     assert.equal(env.HF_GATEWAY_MODE, api)
+    assert.equal(env.HF_GATEWAY_DISABLE_THINKING, 'false')
     assert.equal(env.HF_OPENAI_MODEL, `${api}-fixture`)
     assert.equal(env.HF_GATEWAY_UPSTREAM_MODEL, `openai/${api}-fixture`)
     assert.equal(env.OPENAI_API_KEY, 'fixture-secret')
@@ -238,6 +258,19 @@ test('default smoke subprocess imports existing runner but cannot access upstrea
   assert.equal(child.options.env.SMOKE_WEB_URL, 'http://localhost:45173')
   assert.equal(child.options.env.OPENAI_API_KEY, undefined)
   assert.equal(child.options.env.HF_GATEWAY_KEY, undefined)
+})
+
+test('default smoke relays safe failure diagnostics before cleanup', async () => {
+  const f = fixture({ smokeRunner: undefined })
+  f.options.run = async (command, args, options) => {
+    f.calls.push({ command, args, options })
+    return command === process.execPath ? JSON.stringify({ result: null, diagnostics: ['Smoke: {"stage":"run"}', 'Events: []'] }) : args.includes('logs') ? 'HF_GATEWAY_UNSUPPORTED_REQUEST\nfixture-secret\n' : ''
+  }
+  await assert.rejects(runOpenAI(['smoke', '--api', 'chat'], f.options), /HF_OPENAI_SMOKE_FAILED/)
+  assert(f.logs.includes('Smoke: {"stage":"run"}'))
+  assert(f.logs.includes('HF_GATEWAY_UNSUPPORTED_REQUEST'))
+  assert.doesNotMatch(f.logs.join(' '), /fixture-secret/)
+  assert(f.calls.some(({ args }) => args.includes('down')))
 })
 
 for (const result of [undefined, {}, { ...evidence, run_ids: [id(4)] }, { ...evidence, conversation_ids: [id(2), id(2)] }, { ...evidence, artifact_ids: ['fixture-secret', id(8)] }]) {

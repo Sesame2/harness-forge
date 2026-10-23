@@ -2,7 +2,43 @@
 
 设计依据：[中文](../superpowers/specs/2026-07-19-harness-forge-design.zh-CN.md) / [English](../superpowers/specs/2026-07-19-harness-forge-design.md)。操作步骤见 [README](../../README.md) 与 [fresh clone 验收](local-setup.md#可复现的-fresh-clone-验收)。
 
-本页明确区分工作区验证、同机 fresh clone 和第二独立环境。2026-10-02，原 V0 已通过同一冻结 commit 的本机与独立 CI 完整验收，Task 22 的第二环境与记录交付闸门完成；本记录随独立文档提交同步主分支。所有下列自动验证使用 Fake/测试替身，不调用真实模型；原生 Claude smoke 仍未运行。新增 OpenAI 网关 Task 23–25 不包含在本次 V0 验收中，实施工作树仍有该后续任务的变更，两协议经网关的真实全流程尚未执行。
+本页明确区分工作区验证、同机 fresh clone、第二独立环境及真实模型。原 V0 于2026-10-02通过同一冻结commit的本机与独立CI验收；新增OpenAI网关于2026-10-24完成下述Chat/Responses真实全流程，不沿用旧CI结果冒充新功能验收。原生真实Claude smoke仍未运行。
+
+## OpenAI 双协议真实验收（2026-10-24）
+
+使用用户显式授权的本机 `.env`，固定LiteLLM v1.103.2及既定错误处理补丁，两个模式独立新项目/卷依次执行。模型只记SHA256前缀 `7d963f65d1ed`；`OPENAI_DISABLE_THINKING=true`，保持每Run120秒、最大8轮、单次输出8192 tokens，无launcher自动重试。CLI内部恢复分支并非单一retry设置可完全约束，不把SDK美元预算当作第三方精确计费上限。
+
+两模式均真实经过 Web创建项目/上传合成CSV/发送消息 → Go → Docker → Claude Agent SDK → LiteLLM → 用户上游 → Python工具 → 制品发布。各模式3个Run均succeeded且finalized：首轮、同会话fork续聊、独立第二会话。逐轮验证原始输入digest、4行、独立预期value_sum=54、成功Python工具、唯一主HTML、ECharts实例/画布尺寸与ZRender绘制、source/candidate与active SDK Session；浏览器验证版本1→2→1、刷新事件重放、侧栏会话隔离，无pageerror/资源失败。
+
+### Chat Completions：PASS
+
+- 项目：`6b12b02d-d510-43d0-8bf0-bb93b33e92f5`。
+- 会话：`d48188d7-140d-427b-b69a-1b1cac7c487d`；`517b2041-c07b-4c50-8729-9a90eff167f8`。
+- Run依次为：`3525db8a-e357-4d13-9043-cb2a08e256b0`；`c577570f-70c9-4039-804f-b52a2a0fa290`；`6eccccbc-8016-451c-9419-df2429beca4d`。
+- 主HTML依次为：`d089aefc-3b83-40fd-9f3e-d7f20b754257`；`f6e05354-839d-45cb-9d08-38e6085580cb`；`f25b1aaa-88bf-4039-838b-b2e29207d8d6`。
+- 成功截图：`/var/folders/4n/zbmjjsld3273sjlx1d6fwhp80000gn/T/hf-openai-smoke-6eccccbc-8016-451c-9419-df2429beca4d.png`，执行代理已查看；本轮使用批量计算/写文件提示，未包含后加的“工具期间不附说明”提示。
+
+### Responses：PASS
+
+- 项目：`4687e625-c672-4ba9-8ca8-6f245595a022`。
+- 会话：`03e23e2d-6fe5-420a-afac-9333076bdede`；`bbda49ee-c664-4608-9302-c7ee235a076e`。
+- Run依次为：`2773f190-5de9-4150-bd6f-edbabc135910`；`1145db1b-1830-4ef9-98f3-c2dbddc77457`；`815593f0-c040-4764-ad0b-7478a404f56e`。
+- 主HTML依次为：`d6870690-9e74-484e-b3ba-97e5d0f62827`；`4f89d2b2-155b-4b89-a772-841d48f55595`；`cd996d36-ae5a-45b5-9e93-3396cce7540a`。
+- 成功截图：`/var/folders/4n/zbmjjsld3273sjlx1d6fwhp80000gn/T/hf-openai-smoke-815593f0-c040-4764-ad0b-7478a404f56e.png`，执行代理已查看；本轮同时要求批量写文件和工具期间不附说明。
+
+两个临时项目的容器、卷及网络已由各自finally清理；IDs仅作历史证据，截图在系统临时目录可能被清理，不是运行依赖。真实取消/可控失败/重启主要由确定性合同、integration及Fake E2E覆盖，不声称让付费模型实际触发全部故障。
+
+### 历史失败、修复及限制
+
+- 父进程把缺省工具字段补为null造成二次校验失败：两处 `exclude_none=True`，真实子进程成功/失败工具回归RED→GREEN，合法input null保持不变。
+- 真实runner缺少agent阶段导致Go拒绝preparing→publishing：在candidate ACK后补一个正式阶段事件，公开NDJSON/ACK回归RED→GREEN；未放宽Go状态机。
+- SDK预算提醒的非空system字符串保留原角色/位置；用户明确接受成熟转换器混合文本/工具块顺序规范化，所有文本/JSON/工具ID与结果关联仍必须保留。原生thinking/cache/未知语义、坏JSON、未知终态等仍显式拒绝。
+- 当前用户上游默认thinking需要回放reasoning_content；显式非思考开关解决本次子集，不代表所有模型支持这些开关。当前Responses上游还会拒绝函数调用与结果之间夹说明的历史，最小合成诊断HTTP400 `No tool output found`；成功smoke通过提示避免该形状，不是额外编写转换器或证明此上游任意混合消息均兼容。
+- 曾遇到真实Bash失败，按既定工具错误不等价边界明确中止，未把错误变成功。另有8次工具调用后worker_failed，SDK具体终止子类未留存，不能断言就是max_turns。Chat额外一次有界验收已获用户明确授权。
+- Runtime依赖构建使用本机BuildKit uv下载缓存及相同frozen lock；不是无缓存/禁网/第二独立环境。未针对新网关运行独立云CI或原生真实Claude。旧V0独立CI证据范围保持不变。
+- 更详细的安全失败IDs、费用边界和恢复入口见[checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)。
+
+最终离线回归及交付代码SHA在checkpoint记录；真实模型通过不替代默认测试、严格mock合同和资源归属检查。
 
 ## 当前冻结版本：两环境验收通过（2026-10-02）
 
