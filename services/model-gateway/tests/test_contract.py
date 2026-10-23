@@ -18,7 +18,7 @@ IMAGE = "hf-model-gateway-contract:task23"
 
 
 class GatewayContract(unittest.TestCase):
-    def check_mode(self, mode, disable_thinking=False):
+    def check_mode(self, mode, disable_thinking=False, history_only=False):
         requests = []
         scenario = ["text"]
         cancelled = threading.Event()
@@ -49,10 +49,20 @@ class GatewayContract(unittest.TestCase):
                 if self.path != expected_path:
                     self.send_error(404)
                     return
+                invalid_history = False
+                if scenario[0] == "mixed-history":
+                    pending_calls = set()
+                    for item in body.get("input", []):
+                        if item.get("type") == "function_call":
+                            pending_calls.add(item["call_id"])
+                        elif item.get("type") == "function_call_output":
+                            pending_calls.discard(item["call_id"])
+                        elif pending_calls and item.get("role") == "assistant":
+                            invalid_history = True
                 if scenario[0] == "timeout":
                     time.sleep(33)
-                if scenario[0].startswith("http-"):
-                    status = int(scenario[0][5:])
+                if scenario[0].startswith("http-") or invalid_history:
+                    status = 400 if invalid_history else int(scenario[0][5:])
                     encoded = json.dumps(
                         {
                             "error": {
@@ -404,6 +414,23 @@ class GatewayContract(unittest.TestCase):
                                 },
                             }
                         )
+                        if scenario[0] == "mixed-history":
+                            item = response["output"][0]
+                            part = item["content"][0]
+                            for sequence, value in enumerate(
+                                (
+                                    {"type": "response.output_item.added", "output_index": 0, "item": {**item, "content": []}},
+                                    {"type": "response.content_part.added", "output_index": 0, "item_id": item["id"], "content_index": 0, "part": {**part, "text": ""}},
+                                    {"type": "response.output_text.delta", "output_index": 0, "item_id": item["id"], "content_index": 0, "delta": part["text"]},
+                                    {"type": "response.output_text.done", "output_index": 0, "item_id": item["id"], "content_index": 0, "text": part["text"]},
+                                    {"type": "response.content_part.done", "output_index": 0, "item_id": item["id"], "content_index": 0, "part": part},
+                                    {"type": "response.output_item.done", "output_index": 0, "item": item},
+                                    {"type": "response.completed", "response": response},
+                                ),
+                                start=1,
+                            ):
+                                event({**value, "sequence_number": sequence})
+                            return
                         if scenario[0] == "stream-reasoning":
                             event(
                                 {
@@ -610,6 +637,242 @@ class GatewayContract(unittest.TestCase):
                 )
                 return
             self.assertNotIn(thinking_key, requests[0][2])
+            if history_only:
+                scenario[0] = "mixed-history"
+
+                def text_message(role, kind, *texts):
+                    return {
+                        "type": "message",
+                        "role": role,
+                        "content": [{"type": kind, "text": text} for text in texts],
+                    }
+
+                before = {"type": "text", "text": " before\n"}
+                between = {"type": "text", "text": " between\t"}
+                after = {"type": "text", "text": " after "}
+                calls = [
+                    {
+                        "type": "tool_use",
+                        "id": f"call-{index}",
+                        "name": "lookup",
+                        "input": argument,
+                    }
+                    for index, argument in enumerate(arguments)
+                ]
+                results = [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": f"call-{index}",
+                        "content": f" result {index}\n",
+                        "is_error": False,
+                    }
+                    for index in range(2)
+                ]
+                expected_calls = [
+                    {
+                        "type": "function_call",
+                        "call_id": f"call-{index}",
+                        "name": "lookup",
+                        "arguments": argument,
+                    }
+                    for index, argument in enumerate(arguments)
+                ]
+                expected_results = [
+                    {
+                        "type": "function_call_output",
+                        "call_id": f"call-{index}",
+                        "output": f" result {index}\n",
+                    }
+                    for index in range(2)
+                ]
+                cases = [
+                    (
+                        "single-mixed-message",
+                        [
+                            {"role": "user", "content": "start"},
+                            {"role": "assistant", "content": [before, calls[0], after]},
+                            {"role": "user", "content": [results[0]]},
+                            {"role": "assistant", "content": " later assistant\n"},
+                            {"role": "user", "content": " later user\t"},
+                        ],
+                        [
+                            text_message("user", "input_text", "start"),
+                            text_message("assistant", "output_text", " before\n", " after "),
+                            expected_calls[0],
+                            expected_results[0],
+                            text_message("assistant", "output_text", " later assistant\n"),
+                            text_message("user", "input_text", " later user\t"),
+                        ],
+                        True,
+                    ),
+                    (
+                        "tool-before-all-text",
+                        [
+                            {"role": "user", "content": "start"},
+                            {"role": "assistant", "content": [calls[0], after]},
+                            {"role": "user", "content": [results[0]]},
+                        ],
+                        [
+                            text_message("user", "input_text", "start"),
+                            text_message("assistant", "output_text", " after "),
+                            expected_calls[0],
+                            expected_results[0],
+                        ],
+                        True,
+                    ),
+                    (
+                        "parallel-tools-reversed-results",
+                        [
+                            {"role": "user", "content": "start"},
+                            {"role": "assistant", "content": [before, calls[0], between, calls[1], after]},
+                            {"role": "user", "content": [before, results[1], between, results[0], after]},
+                        ],
+                        [
+                            text_message("user", "input_text", "start"),
+                            text_message("assistant", "output_text", " before\n", " between\t", " after "),
+                            *expected_calls,
+                            expected_results[1],
+                            expected_results[0],
+                            text_message("user", "input_text", " before\n", " between\t", " after "),
+                        ],
+                        True,
+                    ),
+                    (
+                        "separate-tool-turns-and-budget-boundaries",
+                        [
+                            {"role": "user", "content": "start"},
+                            {"role": "system", "content": " USD budget remaining: 2\n"},
+                            {"role": "assistant", "content": [before, calls[0], after]},
+                            {"role": "user", "content": [results[0], {"type": "text", "text": " next tool turn\n"}]},
+                            {"role": "system", "content": " USD budget remaining: 1.5\t"},
+                            {"role": "assistant", "content": [between, calls[1], after]},
+                            {"role": "user", "content": [results[1]]},
+                            {"role": "assistant", "content": " done\n"},
+                            {"role": "user", "content": " continue\t"},
+                        ],
+                        [
+                            text_message("user", "input_text", "start"),
+                            text_message("system", "input_text", " USD budget remaining: 2\n"),
+                            text_message("assistant", "output_text", " before\n", " after "),
+                            expected_calls[0],
+                            expected_results[0],
+                            text_message("user", "input_text", " next tool turn\n"),
+                            text_message("system", "input_text", " USD budget remaining: 1.5\t"),
+                            text_message("assistant", "output_text", " between\t", " after "),
+                            expected_calls[1],
+                            expected_results[1],
+                            text_message("assistant", "output_text", " done\n"),
+                            text_message("user", "input_text", " continue\t"),
+                        ],
+                        True,
+                    ),
+                    (
+                        "pure-tool-does-not-mark-mixed-history",
+                        [
+                            {"role": "user", "content": "start"},
+                            {"role": "assistant", "content": [calls[0]]},
+                            {"role": "user", "content": [results[0]]},
+                        ],
+                        [
+                            text_message("user", "input_text", "start"),
+                            expected_calls[0],
+                            expected_results[0],
+                        ],
+                        False,
+                    ),
+                    (
+                        "pure-text-does-not-mark-mixed-history",
+                        [
+                            {"role": "user", "content": "start"},
+                            {"role": "assistant", "content": [before, after]},
+                            {"role": "user", "content": "next"},
+                        ],
+                        [
+                            text_message("user", "input_text", "start"),
+                            text_message("assistant", "output_text", " before\n", " after "),
+                            text_message("user", "input_text", "next"),
+                        ],
+                        False,
+                    ),
+                ]
+
+                def gateway_logs():
+                    return subprocess.check_output(
+                        ["docker", "logs", name], stderr=subprocess.STDOUT, text=True
+                    )
+
+                marker = "HF_GATEWAY_MIXED_TOOL_HISTORY"
+                for stream in (False, True):
+                    with self.subTest(mode=mode, scenario="invalid-mixed-request-before-marker", stream=stream):
+                        count = len(requests)
+                        marked = gateway_logs().splitlines().count(marker)
+                        status, _ = call({
+                            "stream": stream,
+                            "unknown": "HF_SENSITIVE_REQUEST_SENTINEL",
+                            "messages": [{"role": "assistant", "content": [before, calls[0], after]}],
+                        })
+                        self.assertEqual(status, 400)
+                        self.assertEqual(len(requests), count, "Reject unknown fields before upstream")
+                        self.assertEqual(gateway_logs().splitlines().count(marker), marked)
+                for role in ("user", "assistant"):
+                    tool = calls[0] if role == "assistant" else results[0]
+                    for text in ("", " \n\t"):
+                        blank = {"type": "text", "text": text}
+                        for blocks in ([blank], [before, blank, tool]):
+                            for stream in (False, True):
+                                with self.subTest(mode=mode, scenario="empty-direct-text-rejected", role=role, text=text, mixed=len(blocks) > 1, stream=stream):
+                                    count = len(requests)
+                                    before_logs = gateway_logs().splitlines()
+                                    status, output = call({
+                                        "stream": stream,
+                                        "messages": [{"role": role, "content": blocks}],
+                                    })
+                                    self.assertEqual(status, 400, output)
+                                    self.assertIn("HF_GATEWAY_UPSTREAM_ERROR", json.dumps(output))
+                                    self.assertEqual(len(requests), count, "Reject empty text before upstream")
+                                    after_logs = gateway_logs().splitlines()
+                                    self.assertEqual(after_logs.count(marker), before_logs.count(marker))
+                                    code = "HF_GATEWAY_EMPTY_TEXT_UNREPRESENTABLE"
+                                    self.assertEqual(after_logs.count(code), before_logs.count(code) + 1)
+                for label, history, expected, mixed in cases:
+                    for stream in (False, True):
+                        with self.subTest(mode=mode, scenario=label, stream=stream):
+                            count = len(requests)
+                            marked = gateway_logs().splitlines().count(marker)
+                            status, output = call({
+                                "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+                                "messages": history,
+                                "stream": stream,
+                            })
+                            self.assertEqual(len(requests), count + 1, "History must not retry")
+                            self.assertEqual(status, 200, output)
+                            self.assertEqual(gateway_logs().splitlines().count(marker), marked + int(mixed))
+                            if stream:
+                                self.assertEqual(output[-1]["type"], "message_stop")
+                                self.assertFalse(any(item["type"] == "error" for item in output))
+                                self.assertEqual(
+                                    "".join(item["delta"]["text"] for item in output if item["type"] == "content_block_delta"),
+                                    "  preserved\n",
+                                )
+                                final = next(item for item in output if item["type"] == "message_delta")
+                                self.assertEqual(final["delta"]["stop_reason"], "end_turn")
+                                self.assertEqual(final["usage"], {"input_tokens": 7, "output_tokens": 3})
+                            else:
+                                self.assertEqual(output["content"], [{"type": "text", "text": "  preserved\n"}])
+                                self.assertEqual(output["stop_reason"], "end_turn")
+                            sent = requests[-1][2]["input"]
+                            normalized = [
+                                {**item, "arguments": json.loads(item["arguments"])}
+                                if item.get("type") == "function_call"
+                                else item
+                                for item in sent
+                            ]
+                            self.assertEqual(normalized, expected)
+                logs = gateway_logs()
+                self.assertIn("HF_GATEWAY_MIXED_TOOL_HISTORY", logs.splitlines())
+                for sensitive in ("fake-openai-key", "sk-fake-gateway-key", " before", " between", "HF_SENSITIVE_REQUEST_SENTINEL", "HF_SENSITIVE_UPSTREAM_SENTINEL"):
+                    self.assertNotIn(sensitive, logs)
+                return
             for extra in (
                 {"top_k": 1},
                 {"thinking": {"type": "enabled", "budget_tokens": 1024}},
@@ -1124,6 +1387,9 @@ asyncio.run(main())"""
 
     def test_responses_contract(self):
         self.check_mode("responses")
+
+    def test_responses_mixed_tool_history(self):
+        self.check_mode("responses", history_only=True)
 
     def test_chat_thinking_explicitly_disabled(self):
         self.check_mode("chat", disable_thinking=True)

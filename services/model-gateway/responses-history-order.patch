@@ -1,0 +1,24 @@
+--- a/litellm/llms/anthropic/experimental_pass_through/responses_adapters/transformation.py
++++ b/litellm/llms/anthropic/experimental_pass_through/responses_adapters/transformation.py
+@@ -370,10 +370,5 @@
+                 elif isinstance(content, list):
+                     blocks = tuple(block for block in content if isinstance(block, dict))
+-                    input_items.extend(
+-                        item
+-                        for _, group in groupby(enumerate(blocks), key=self._assistant_block_group_key)
+-                        for item in self._assistant_group_to_input_items(tuple(block for _, block in group))
+-                    )
+                     asst_parts: list[dict[str, Any]] = [  # mutable-ok: API message payload
+                         {"type": "output_text", "text": block.get("text", "")}  # mutable-ok: API message payload
+                         for block in blocks
+@@ -388,5 +383,10 @@
+                             }
+                         )
++                    input_items.extend(
++                        item
++                        for _, group in groupby(enumerate(blocks), key=self._assistant_block_group_key)
++                        for item in self._assistant_group_to_input_items(tuple(block for _, block in group))
++                    )
+ 
+         return input_items
+ 

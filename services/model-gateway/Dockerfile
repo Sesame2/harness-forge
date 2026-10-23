@@ -1,8 +1,8 @@
 FROM docker.litellm.ai/berriai/litellm:v1.103.2@sha256:f63fb81b831b170ec16851e23c36ac5bf52ef106b271406429524a2ed730bbfd
 
-COPY upstream-errors.patch /tmp/upstream-errors.patch
+COPY upstream-errors.patch responses-history-order.patch /tmp/
 # Exact source hashes plus zero-fuzz patching make upstream version drift fail
-# the build. The patch changes error handling, never protocol field mappings.
+# the build. Keep strict errors and same-message text-first normalization isolated.
 RUN apk add --no-cache --virtual .patch-build patch \
     && cd /app/.venv/lib/python3.13/site-packages \
     && echo 'a427afe224de9d24091158c841864884f698ec218bb0b04389bed35985da7d06  litellm/litellm_core_utils/core_helpers.py' | sha256sum -c - \
@@ -15,7 +15,8 @@ RUN apk add --no-cache --virtual .patch-build patch \
     && python -c 'import openai; assert openai.__version__ == "2.33.0"' \
     && echo '3ff1f84c4fd76d5cc0abb9e279da67265cada89b3beaf91a70cb053229a5622c  openai/_base_client.py' | sha256sum -c - \
     && patch --batch --fuzz=0 -p1 < /tmp/upstream-errors.patch \
-    && rm /tmp/upstream-errors.patch \
+    && patch --batch --fuzz=0 -p1 < /tmp/responses-history-order.patch \
+    && rm /tmp/upstream-errors.patch /tmp/responses-history-order.patch \
     && apk del .patch-build
 
 COPY capabilities.py callback.py config-chat.yaml config-responses.yaml /app/gateway/

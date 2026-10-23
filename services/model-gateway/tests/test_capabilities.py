@@ -65,6 +65,36 @@ class CapabilityContract(unittest.TestCase):
                     self.validate({**request, "messages": [{"role": "system", "content": content}]}, mode)
         self.assertEqual(request, original)
 
+    def test_empty_direct_text_blocks_are_rejected_before_lossy_normalization(self):
+        for mode in ("chat", "responses"):
+            for role in ("user", "assistant"):
+                tool = (
+                    {"type": "tool_use", "id": "call-1", "name": "lookup", "input": {}}
+                    if role == "assistant"
+                    else {"type": "tool_result", "tool_use_id": "call-1", "content": "result"}
+                )
+                for text in ("", " \n\t", "\u3000"):
+                    empty = {"type": "text", "text": text}
+                    for blocks in ([empty], [{"type": "text", "text": " keep\n"}, empty, tool]):
+                        with self.subTest(mode=mode, role=role, text=text, mixed=len(blocks) > 1):
+                            request = {**self.request, "messages": [{"role": role, "content": blocks}]}
+                            original = copy.deepcopy(request)
+                            with self.assertRaisesRegex(ValueError, "^HF_GATEWAY_EMPTY_TEXT_UNREPRESENTABLE$"):
+                                self.validate(request, mode)
+                            self.assertEqual(request, original)
+
+    def test_text_edge_whitespace_system_strings_and_tool_results_stay_unchanged(self):
+        request = {**self.request, "messages": [
+            {"role": "user", "content": [{"type": "text", "text": " \nkeep user \t"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": " \nkeep assistant \t"}]},
+            {"role": "system", "content": " \n\t"},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": [{"type": "text", "text": " \n\t"}]}]},
+        ]}
+        original = copy.deepcopy(request)
+        for mode in ("chat", "responses"):
+            self.validate(request, mode)
+        self.assertEqual(request, original)
+
     def test_unknown_top_level_or_semantic_parameter_is_rejected(self):
         for name, value in {
             "bogus": True,

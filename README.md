@@ -43,7 +43,7 @@ node scripts/openai.mjs dev --api chat
 # 另一个配置位置可加 --env-file /absolute/path/to/.env
 ```
 
-`dev` 使用独立 `harness-forge-openai` 项目；原生 Claude 和默认 Compose 拓扑不变。网关没有宿主机端口，OpenAI key 只进入网关；Runtime 继续通过 Claude Agent SDK 调用它。不自动 fallback、不替换用户指定模型，不支持的语义明确报错。完整 smoke 命令、会话切换限制和费用边界见[本地开发](docs/development/local-setup.md#openai-双协议兼容模式)。2026-10-24两模式各三Run/两会话的真实全流程均已通过，详见[验证记录](docs/development/verification.md#openai-双协议真实验收2026-10-24)；当前用户Responses上游仍有混合消息工具历史的顺序限制，不能理解为任意Claude请求均无损兼容。
+`dev` 使用独立 `harness-forge-openai` 项目；原生 Claude 和默认 Compose 拓扑不变。网关没有宿主机端口，OpenAI key 只进入网关；Runtime 继续通过 Claude Agent SDK 调用它。不自动 fallback、不替换用户指定模型，不支持的语义明确报错。完整 smoke 命令、会话切换限制和费用边界见[本地开发](docs/development/local-setup.md#openai-双协议兼容模式)。2026-10-24已修复Responses混合工具历史顺序，两模式重新完成各三Run/两会话真实全流程；Responses实际网关确认混合文本/工具请求，不再通过提示禁止说明来规避。详见[最新验证记录](docs/development/verification.md)与[checkpoint](docs/superpowers/checkpoints/2026-10-02-openai-gateway.md)；这不是任意Claude语义的无损兼容保证。
 
 ## 测试
 

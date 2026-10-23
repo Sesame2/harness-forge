@@ -168,6 +168,11 @@ export async function runOpenAI(argv, {
       return output.result
     }
     evidence = smokeEvidence(await perform('SMOKE_FAILED', () => smokeRunner({ fullUI: true, webURL, baseURL, signal, log: () => {} })))
+    if (api === 'responses') {
+      const diagnostics = await perform('MIXED_TOOL_HISTORY_UNAVAILABLE', () => run('docker', [...compose, 'logs', '--no-color', '--no-log-prefix', '--tail=200', 'model-gateway'], { env: childEnv, cwd: root, signal }))
+      if (!diagnostics.split(/\r?\n/).includes('HF_GATEWAY_MIXED_TOOL_HISTORY')) throw fail('MIXED_TOOL_HISTORY_MISSING')
+      log('HF_GATEWAY_MIXED_TOOL_HISTORY')
+    }
   } catch (error) {
     failure = error
     try {

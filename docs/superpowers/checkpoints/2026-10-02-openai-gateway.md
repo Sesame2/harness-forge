@@ -2,7 +2,25 @@
 
 建立日期：2026-10-02，最新验收日期：2026-10-24。已批准范围的实现、Chat/Responses真实全流程及本机回归均通过；不代表任意Claude语义无损、原生真实Claude或新网关独立CI均已验证。主分支交付状态见最新Git记录。
 
-## 2026-10-24 交付 checkpoint
+## 2026-10-24 最新 checkpoint：混合工具历史修复验收完成，待Git交付
+
+- 用户明确要求解除Responses顺序限制、优先成熟方案、真实全流程后同步主分支；本轮从main/实施树均 `c6fba08dffca02ef5b8f9cd12255ab19de064aad` 干净状态恢复。旧Task1–25完成记录保留；本轮Task26–28的实现/真实与回归验收已完成，Git交付状态在下方收口。入口为[新计划Task26–28](../plans/2026-10-24-responses-tool-history-order.md)。
+- [成熟方案研究](../../research/2026-10-24-responses-tool-history-order.md)确认：当前固定版、v1.106.2和核查时main均先输出calls再文本；上游PR #45478未合并，恢复原序仍不能覆盖tool后text。采用同版本现成Chat→Responses的text-first策略，只在单条assistant消息内移动既有输出步骤；不切协议、不新建转换器。
+- 原合同只分别比对文本/JSON/ID，mock不会拒绝夹在call/result之间的assistant文本，旧smoke又通过提示避免混合，因此不能证明限制已修复。新增严格实际HTTP反例由子代理RED 8.598s，父级独立RED 8.959s，single mixed、多工具/反序结果、两轮/budget三个场景均HTTP400且只调用一次；未读.env或收费上游。
+- 顺序补丁独立命名、保留原始源hash和zero-fuzz；首次构建因手写patch hunk计数错误明确失败，校正后源hash/双补丁构建成功，没有模型调用。真实新边界流程及最终回归记录如下，不以研究或mock冒充真实完成。
+- 严格HTTP反例顺序修复后GREEN；再补原始请求mixed marker，旧镜像无marker明确RED，新镜像验证通过。最终完整网关合同5/5（106.969s），包括6种有效历史×stream/nonstream的精确shape/SSE终态、未知字段早拒绝和16个空白块负例。纯空白块曾被固定LiteLLM前处理删除：新增1条能力拒绝，纯单元先24子例RED再13项GREEN；HTTP400沿用安全通用码，专用日志码单独计数，零上游且不产生混合证据。首次全合同仅因专用码正文断言不符合既有脱敏策略失败，未更改错误脱敏以迎合测试。
+- 实际用户上游A/B合成诊断共3个64-token请求：旧网关single mixed HTTP400，新网关同一历史HTTP200，多工具交错文本且反序返回结果HTTP200；模型hash `7d963f65d1ed`，新网关实际mixed marker确认，两套自有临时容器已清理。不是完整UI验收的替代。
+- 本轮真实Chat第1次 `49c8d448-407f-4c8a-98c8-f0279150ba4c` 因工具错误失败；Responses第1次前两Run `cfd62a4e-24f1-4f37-a088-3e2e6e96d87d`、`49527c06-89d5-40bc-bf7b-545436990692` 成功，独立第二会话Run `38363803-5057-44c2-b681-58b04d5dd4f7` 工具失败；均按既定 `TOOL_ERROR_UNREPRESENTABLE` 中止且确认混合marker，不把失败视作成功。Chat第2次两Run `38ce7afd-70db-4ade-b20a-cffc3a13b9e9`、`056b71d9-786a-49d5-8022-40b89d4a2298` 成功发布，第二份报告在浏览器chart闸门失败；不能算完整验收通过。均已清理自有项目；未保存具体工具异常，不臆断其根因。
+- smoke任务进一步明确枚举可能没有扩展名的存储输入、简单离线柱图、固定正高度、DOM就绪后初始化及原样复制ECharts；保持实际CSV计算、混合说明+工具、完整三Run/两会话所有闸门不变，也不提高8轮/8192/120s。新提示最终Chat第3次、Responses第2次完整验收均PASS，未超各3次上限。
+- 本轮默认Go/Python290（8.43s）/Vitest108/Node79/纯校验13通过；Ruff/Mypy13、build/layout、原生及Responses overlay空env Compose通过。真实PostgreSQL/MinIO integration完整通过（权限0.67s，无skip/cache），Fake E2E 5/5（23.4s），资源已finally清理。实现/安全自查和独立规格审查均未发现阻断问题；marker作者的自查不冒充独立审查。
+- Responses最终PASS：自有项目 `harness-forge-openai-smoke-responses-279255c86536d97d907f5e74`；Project `df843e45-d1e5-41c6-9bf1-356357fd657b`；Conversations `30ef47ea-68a9-46b9-8d0b-5a879613c729`、`0436c7de-d3a0-4a59-8609-2905720925e0`；Runs `37c5d4e5-90e1-461e-b55e-a2b716a7b498`、`29424c79-1cb0-40da-a073-a37709b83bee`、`066c971a-1374-4769-8516-53fb2458a927`；主HTML `2ead27b5-339f-4c52-acd5-1a1475605541`、`f0b54c62-2f7a-4fb2-87f0-d6eebe31e823`、`1bdc058e-3f33-4672-b740-b9e3bd8111db`。三轮均succeeded/finalized、实际mixed marker确认、cleanup=ok。
+- Chat最终PASS：自有项目 `harness-forge-openai-smoke-chat-468b0a79070243cea81abe0c`；Project `b3c87cb1-6932-4e48-9cd3-7a399f699874`；Conversations `4e29acfd-b89d-4f47-99e3-c74cc5749595`、`f91377ee-7b5e-40b9-89bf-fd7f1be2a9f4`；Runs `5bd97774-c062-4923-a418-ad8e6077d11a`、`d42f163c-0307-4966-a4a8-ce9a60ec7af1`、`4c94a261-de07-441e-ae87-9c3babdde312`；主HTML `61c2cde4-c20d-4db5-a58c-8323c225518e`、`c3c37938-4318-478d-90ca-fb79649c5898`、`e10d9424-ca42-4be9-962b-746c0472c7ae`。三轮均succeeded/finalized、cleanup=ok。
+- 两协议均经过真实UI→Go→Docker/SDK→网关→用户上游→Python→离线HTML/ECharts，验证4行/value_sum54、输入digest、实际绘制、SDK续聊来源、独立会话、版本1→2→1及刷新重放。主执行代理已查看两份成功截图，路径及全部证据见[最新验证记录](../../development/verification.md)。最终提示更新后Node79再过（2.217s），无临时生产诊断插桩；独立规格复核无新增问题。
+- 新网关未跑独立云CI、无缓存fresh clone或原生真实Claude；不把旧冻结V0的CI冒充当前实现。E2B、用户认证/多租户、公网部署不在本轮范围，保留既有单用户原型边界。真实工具失败仍明确失败，不保证模型生成脚本永远成功。
+- 提交前staged检查发现统一patch必需空白上下文行的误报；尝试裁减上下文被zero-fuzz构建明确拒绝，未调用模型。恢复原已验收patch，仅用 `.gitattributes` 对网关patch数据文件关闭不适用的空白样式检查，Python等源码检查不变；重建成功，前后实际adapter SHA256均 `dd5a1cc0c25d7a370829acaa0f9f1e9a6269aa5f97bdb876f639c7aa9038d796`，没有改变已真实验收的源码。
+- 本轮5个真实smoke项目、integration、e2e、gateway-contract及合成诊断的最终容器/卷/网络复查均0；既有开发资源未删除。真实key/URL/模型原值未出现在变更中，主目录.env仍600/忽略/未跟踪；只提交公开研究、代码和脱敏证据。
+
+## 2026-10-24 顺序修复前交付 checkpoint（历史）
 
 - 功能实现冻结提交：`f1403223eaa8af99a149a7d7b30a0b19fe68153e`。已快进主目录main并push；`git ls-remote origin refs/heads/main`核实同一SHA。该提交包含本页下述全部运行时代码和回归，后续提交仅完成验收记录/计划checkbox，不改变实现。
 - Task1–25已批准范围没有剩余实施任务。后续说“继续”时，先核对本页与Git状态，从新的需求开始；不要自动重做历史任务或再次发起收费smoke。E2B仍只是预留接口，不是本轮未完成事项。

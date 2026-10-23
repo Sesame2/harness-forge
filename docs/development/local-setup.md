@@ -126,7 +126,7 @@ docker compose --env-file /dev/null -p harness-forge-openai \
 
 兼容模式按协议、规范上游 URL、实际模型隔离 Session 目录；密钥轮换不改变归属。旧路由仍有未 finalize Run 时拒绝切换；切换后旧会话不能在另一模型上续聊，切回原路由才能继续，不迁移 transcript。已软删除会话的物理清理仍覆盖受管旧路由，失败不会假报成功。
 
-显式完整 smoke 入口如下，按顺序运行，不把连通性检查当作应用验收。2026-10-24两种模式的三Run/两会话真实流程均已通过，证据及上游限制见[验证记录](verification.md#openai-双协议真实验收2026-10-24)与[checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)：
+显式完整 smoke 入口如下，按顺序运行，不把连通性检查当作应用验收。2026-10-24解除Responses混合工具历史顺序限制后，两种模式重新完成三Run/两会话真实流程；Responses另确认实际混合请求标记，证据及保真边界见[最新验证记录](verification.md)与[checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)：
 
 ```sh
 node scripts/openai.mjs smoke --api chat
@@ -138,7 +138,9 @@ smoke 每次生成独立项目 `harness-forge-openai-smoke-chat-<随机后缀>` 
 
 真实 smoke 仅使用合成 CSV，单 Run 120 秒、Profile 最大 8 轮、兼容模式单次输出上限 8192 tokens；SDK 的 Anthropic `max_budget_usd` 不是 OpenAI 上游的精确费用上限。网关禁用自动重试/fallback，但固定 Claude CLI 部分连接/流中恢复分支并不受单一 retry 参数控制，因此不承诺整个工作流只有一个 HTTP 请求。失败不会由 launcher 自动重跑，修复后显式复测，禁止无界付费循环。
 
-当前用户Responses上游对工具历史还有额外顺序约束：LiteLLM把function_call放到assistant说明前时，上游可能拒绝夹在调用与结果之间的说明并返回 `No tool output found`。smoke要求工具期间不输出说明、批量计算写文件以减少轮数，已在两模式完成验收；不保证模型一定遵从提示，发生这种上游拒绝仍应失败，不能删除文本/结果或静默切协议后重试。任一实际工具返回错误也按既定不等价边界明确失败。
+Responses混合工具历史现采用同版本LiteLLM已有的text-first策略：只在单条assistant消息内先输出全部说明、再输出全部function_call，保留文本/首尾空白、参数、工具ID及结果关联，不跨消息重排。独立窄补丁由原始源hash与zero-fuzz保护，依据见[成熟方案研究](../research/2026-10-24-responses-tool-history-order.md)；不是第二套转换器或通用Claude语义等价保证。
+
+完整smoke明确要求同条回复包含说明和工具，不再通过禁止说明绕开限制；Responses结束前必须在本次网关日志中确认固定 `HF_GATEWAY_MIXED_TOOL_HISTORY` 标记，否则即使报告生成也失败。验收使用简单离线柱图并枚举可能没有扩展名的输入文件，仍检查真实Python计算、ECharts实际绘制和所有三轮/两会话闸门。独立空/纯空白text块会被固定LiteLLM前处理删除，因此提前HTTP400拒绝，安全日志码为 `HF_GATEWAY_EMPTY_TEXT_UNREPRESENTABLE`；含正文首尾空白、system字符串和tool_result.content不在此新增拒绝范围。实际工具返回错误仍按既定不等价边界明确失败，不自动切协议或重试。
 
 无付费验证：`make test-openai` 只用假 HTTP/子进程；`make test-gateway` 才显式启动固定真实网关接本地 mock 上游。无凭证的覆盖文件渲染检查可用下面命令；占位值仅为配置校验服务，不表示可以无凭证调用：
 

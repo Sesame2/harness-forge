@@ -330,6 +330,16 @@ function uiFixture(options = {}) {
 test('full UI smoke creates, uploads and sends three runs through controls, verifies lineage and replay', async () => {
   const f = uiFixture()
   const result = await runSmoke(f.args)
+  const submitted = f.calls.filter(([kind, selector]) => kind === 'FILL' && selector === 'textbox:消息内容').map(([, , value]) => value)
+  assert.equal(submitted.length, 3)
+  for (const content of submitted) {
+    assert.match(content, /include a brief explanatory text block in the same assistant response as the tool call/i)
+    assert.match(content, /eight model turns and at most four tool calls/)
+    assert.match(content, /enumerate \.\.\/inputs rather than assuming a suffix/)
+    assert.match(content, /simple ECharts bar chart/)
+    assert.match(content, /Copy the supplied ECharts asset unchanged/)
+    assert.doesNotMatch(content, /tool calls only|do not include explanatory text/i)
+  }
   assert.deepEqual(result, { project_id: uuid(1), conversation_ids: [uuid(10), uuid(11)], run_ids: [uuid(20), uuid(21), uuid(22)], artifact_ids: [uuid(100), uuid(101), uuid(102)] })
   assert.equal(f.calls.filter(([method, path]) => method === 'UI_POST' && path.endsWith('/messages')).length, 3)
   assert(f.calls.some(([method]) => method === 'RELOAD'))

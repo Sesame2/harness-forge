@@ -44,9 +44,13 @@ Chat 模式打开 `use_chat_completions_url_for_anthropic_messages`，拒绝可�
 
 首批范围是地理分析所需的文本与本地 function 工具，CSV/GeoJSON 是沙箱输入文件，不是模型多模态输入。
 
-允许 system/user/assistant 文本、成功的 tool result、tool use 的 name/ID/JSON 参数、工具 schema、流式或非流式、多工具及多轮历史。必须保留所有文本及其空白、同类内容的相对次序、调用关联和参数值。用户于 2026-10-23 明确批准：混合文本与工具块可以使用固定 LiteLLM 的既有顺序规范化，不要求跨种类块的位置相同；不编写补偿转换器。Chat 将 assistant 文本连接并保留 tool_calls，Responses 将 function call 放在 assistant 文本之前；两者将 tool result 放在同条 user 文本之前。`is_error=true` 没有等价字段时仍明确失败，不假装普通成功结果。
+允许 system/user/assistant 文本、成功的 tool result、tool use 的 name/ID/JSON 参数、工具 schema、流式或非流式、多工具及多轮历史。必须保留所有文本及其空白、同类内容的相对次序、调用关联和参数值。用户于2026-10-23批准跨种类块顺序规范化，并于2026-10-24进一步要求解决Responses混合工具历史限制：Chat继续连接assistant文本并保留tool_calls；Responses参考同版本成熟Chat→Responses策略，在每一条assistant消息内先追加全部原文本、再追加全部原function_call。不得跨Message重排，不增加第二套转换器。两者仍将tool result放在同条user文本之前。`is_error=true`没有等价字段时仍明确失败，不假装普通成功结果。
+
+该顺序修补独立保存为 `responses-history-order.patch`，在固定adapter原始SHA256校验及zero-fuzz之后应用，和既有错误处理补丁分开维护。它是参考成熟策略的本地窄映射修复，不冒称已合并上游PR。最新release仍有缺陷；上游恢复原块顺序的未合并PR不能完整适配当前上游tool后text场景，依据见[本轮研究](../../research/2026-10-24-responses-tool-history-order.md)。
 
 具体格式边界：Responses 将多个顶层 system 文本块按顺序以换行分隔，每个块的原字符串保持不变；这是块边界规范化，不承诺跨协议请求 JSON 的整段字节相同。SDK 的美元预算会另在历史中插入非空 system 字符串；该窄形状保留原角色、原字符串和原位置，Chat 显式声明成熟转换器的 mid-conversation system 能力，合同失败时不能退化为 user 角色。预算提醒不表示已获得第三方上游的精确费用上限。
+
+固定LiteLLM在分派两种协议前会删除messages列表内独立的空/纯空白text块；因此原始请求校验对这种形状明确拒绝，不让其静默通过。HTTP返回400及既有安全通用码，网关日志记录专用 `HF_GATEWAY_EMPTY_TEXT_UNREPRESENTABLE`，不输出请求内容。含正文文本的首尾空白继续原样保留；不扩大到system字符串、字符串形式的消息或tool_result.content内文本，后者沿用既有支持边界。
 
 拒绝原生 Anthropic thinking/signature、显式缓存控制、image/document/未知内容块、服务器工具、无法支持的 stop/top_k/上下文管理及未知语义字段。`thinking: disabled` 等明确关闭状态允许；不把“字段不认识”处理成忽略。实现前以固定 SDK 真实请求确认所需字段白名单，不能以放宽校验掩盖差异。
 
@@ -61,7 +65,7 @@ usage 仅映射上游实际返回的计数，不承诺不同 tokenizer/计费等
 1. 先离线：真实固定版转换器连接本地 mock 上游，逐项断言两模式的实际 HTTP path/body/鉴权、文本/工具/历史及 SSE；mock 明确拒绝另一协议，防止路由假通过。
 2. 反例必须在上游调用前拒绝：未知字段/块、cache_control、native thinking、工具错误状态、不可映射参数。额外验证 reasoning 不被 strip-and-retry、错误/截断/取消不成功。
 3. 再真实：每协议使用独立临时项目和合成 CSV，经过浏览器/Go/真实 Docker Runtime/SDK/网关/用户模型，产生真实 Python 工具执行、分析证据 JSON、合法 manifest 和离线 HTML/ECharts 制品。
-4. 两协议各验证首轮、续聊产生第二版本、另一个会话隔离、刷新重放、制品版本切换、取消与失败保留旧制品。可控失败/崩溃场景仍以确定性合同和既有集成/E2E 为主要证据，不要求付费模型碰运气触发。
+4. 两协议各验证首轮、续聊产生第二版本、另一个会话隔离、刷新重放、制品版本切换、取消与失败保留旧制品。Responses真实验收不再用“工具期间不附说明”绕开混合历史；必须从同一测试项目的网关原始请求校验后安全标记确认发生过assistant文本+tool_use同条历史，否则失败。可控失败/崩溃场景仍以确定性合同和既有集成/E2E为主要证据，不要求付费模型碰运气触发。
 5. 真实执行设置有界输出、最大轮数、单次超时和有限重试次数；先每协议一个最小工作流，再仅针对失败修复复测，不进行无界收费循环。SDK 的 Anthropic budget 不能当作第三方上游精确费用上限。
 6. 原有 unit/integration/Fake E2E/build 全量复验。记录代码 SHA、网关版本、实际模式、脱敏模型标识、Run/Artifact IDs、通过/失败和清理结果；每项证据注明 mock 或真实来源。
 

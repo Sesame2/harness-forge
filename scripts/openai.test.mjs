@@ -28,7 +28,7 @@ function fixture(overrides = {}) {
       status: 'completed', choices: [{ message: { content: 'fixture-answer' } }],
       output: [{ type: 'message', content: [{ type: 'output_text', text: 'fixture-answer' }] }],
     }) },
-    run: async (command, args, options) => { calls.push({ command, args, options }); return command === process.execPath ? JSON.stringify({ result: evidence, diagnostics: [] }) : '' },
+    run: async (command, args, options) => { calls.push({ command, args, options }); return command === process.execPath ? JSON.stringify({ result: evidence, diagnostics: [] }) : args.includes('logs') ? 'HF_GATEWAY_MIXED_TOOL_HISTORY\n' : '' },
     smokeRunner: async (options) => { smoke.push(options); return evidence },
     log: (line) => logs.push(line), ...overrides,
   } }
@@ -130,14 +130,14 @@ for (const [api, webPort, apiPort] of [['chat', 45173, 48080], ['responses', 551
     await runOpenAI(['smoke', '--api', api], f.options)
     assert.equal(f.reads[0], `${root}/.env`)
     const compose = f.calls.filter(({ args }) => args?.[0] === 'compose')
-    assert.equal(compose.length, 2)
+    assert.equal(compose.length, api === 'responses' ? 3 : 2)
     const project = compose[0].args[4]
     assert.match(project, new RegExp(`^harness-forge-openai-smoke-${api}-[0-9a-f]{24}$`))
     assert.deepEqual(f.calls.slice(0, 3).map(({ args }) => args), ['container', 'volume', 'network'].map((kind) => [kind, 'ls', kind === 'container' ? '-aq' : '-q', '--filter', `label=com.docker.compose.project=${project}`]))
     assert.deepEqual(compose[0].args.slice(0, 9), ['compose', '--env-file', '/dev/null', '-p', project, '-f', `${root}/docker-compose.yaml`, '-f', `${root}/docker-compose.openai.yaml`])
     assert(compose[0].args.includes('up'))
-    assert.equal(compose[1].args[4], project)
-    assert.deepEqual(compose[1].args.slice(-4), ['down', '-v', '--remove-orphans', '--timeout=10'])
+    assert.equal(compose.at(-1).args[4], project)
+    assert.deepEqual(compose.at(-1).args.slice(-4), ['down', '-v', '--remove-orphans', '--timeout=10'])
     assert(f.logs.some((line) => line === `HF_OPENAI_SMOKE_START mode=${api} project=${project}`))
     const env = compose[0].options.env
     assert.equal(env.HF_MODEL_BACKEND, `openai-${api}`)
@@ -288,6 +288,61 @@ test('successful smoke returns and logs only the whitelisted full-UI UUID eviden
   assert.deepEqual(await runOpenAI(['smoke', '--api', 'chat'], f.options), evidence)
   assert.match(f.logs.join(' '), new RegExp(evidence.run_ids[2]))
   assert.doesNotMatch(f.logs.join(' '), /private_payload|fixture-secret/)
+})
+
+test('Responses full UI cannot pass without gateway evidence of mixed assistant tool history', async () => {
+  const f = fixture()
+  f.options.run = async (command, args, options) => { f.calls.push({ command, args, options }); return '' }
+  await assert.rejects(runOpenAI(['smoke', '--api', 'responses'], f.options), { message: 'HF_OPENAI_MIXED_TOOL_HISTORY_MISSING' })
+  assert(f.calls.some(({ args }) => args?.includes('down')))
+  assert(!f.logs.some((line) => line.includes('SMOKE_OK')))
+  assert.doesNotMatch(f.logs.join(' '), /fixture-secret/)
+})
+
+test('Responses accepts only a fixed gateway marker after completed full UI and before owned cleanup', async () => {
+  let completed = false
+  const f = fixture({ smokeRunner: async () => { completed = true; return { ...evidence, private_payload: 'fixture-secret' } } })
+  f.options.run = async (command, args, options) => {
+    f.calls.push({ command, args, options })
+    if (args.includes('logs')) {
+      assert(completed, 'gateway evidence read before the full UI workflow completed')
+      return 'fixture-secret\nHF_GATEWAY_MIXED_TOOL_HISTORY\n{"private":"fixture-secret"}\n'
+    }
+    return ''
+  }
+  assert.deepEqual(await runOpenAI(['smoke', '--api', 'responses'], f.options), evidence)
+  const diagnostics = f.calls.filter(({ args }) => args?.includes('logs'))
+  assert.equal(diagnostics.length, 1)
+  assert.deepEqual(diagnostics[0].args.slice(-5), ['logs', '--no-color', '--no-log-prefix', '--tail=200', 'model-gateway'])
+  const project = f.calls.find(({ args }) => args?.includes('up')).args[4]
+  assert.equal(diagnostics[0].args[4], project)
+  assert(f.calls.indexOf(diagnostics[0]) < f.calls.findIndex(({ args }) => args?.includes('down')))
+  assert(f.logs.includes('HF_GATEWAY_MIXED_TOOL_HISTORY'))
+  assert(f.logs.some((line) => line.includes('SMOKE_OK')))
+  assert.doesNotMatch(f.logs.join(' '), /fixture-secret|private_payload/)
+})
+
+for (const output of ['prefix HF_GATEWAY_MIXED_TOOL_HISTORY\n', 'HF_GATEWAY_MIXED_TOOL_HISTORY suffix\n', '{"message":"HF_GATEWAY_MIXED_TOOL_HISTORY"}\n']) {
+  test(`Responses rejects an embedded or decorated marker: ${JSON.stringify(output)}`, async () => {
+    const f = fixture()
+    f.options.run = async (command, args, options) => { f.calls.push({ command, args, options }); return args.includes('logs') ? output : '' }
+    await assert.rejects(runOpenAI(['smoke', '--api', 'responses'], f.options), { message: 'HF_OPENAI_MIXED_TOOL_HISTORY_MISSING' })
+    assert(f.calls.some(({ args }) => args?.includes('down')))
+    assert(!f.logs.some((line) => line.includes('SMOKE_OK')))
+  })
+}
+
+test('Responses gateway evidence read failure is safe and still cleans owned resources', async () => {
+  const f = fixture()
+  f.options.run = async (command, args, options) => {
+    f.calls.push({ command, args, options })
+    if (args.includes('logs')) throw new Error('fixture-secret')
+    return ''
+  }
+  await assert.rejects(runOpenAI(['smoke', '--api', 'responses'], f.options), { message: 'HF_OPENAI_MIXED_TOOL_HISTORY_UNAVAILABLE' })
+  assert(f.calls.some(({ args }) => args?.includes('down')))
+  assert(!f.logs.some((line) => line.includes('SMOKE_OK')))
+  assert.doesNotMatch(f.logs.join(' '), /fixture-secret/)
 })
 
 test('real launcher SIGTERM waits for startup subprocess to close, then cleans owned resources', async () => {

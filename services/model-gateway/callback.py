@@ -22,7 +22,8 @@ async def authenticate(request: Request, api_key: str) -> UserAPIKeyAuth:
     try:
         # Request.json() is the original transport body, not LiteLLM's cleaned
         # proxy_server_request snapshot or client-supplied metadata.
-        validate_request(await request.json(), os.environ.get("HF_GATEWAY_MODE", ""))
+        body = await request.json()
+        validate_request(body, os.environ.get("HF_GATEWAY_MODE", ""))
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         code = (
             str(error)
@@ -31,6 +32,16 @@ async def authenticate(request: Request, api_key: str) -> UserAPIKeyAuth:
         )
         print(code, flush=True)
         raise HTTPException(400, code) from None
+    for message in body["messages"]:
+        content = message["content"]
+        if (
+            message["role"] == "assistant"
+            and isinstance(content, list)
+            and any(block["type"] == "tool_use" for block in content)
+            and any(block["type"] == "text" and block["text"].strip() for block in content)
+        ):
+            print("HF_GATEWAY_MIXED_TOOL_HISTORY", flush=True)
+            break
     return UserAPIKeyAuth(api_key=api_key)
 
 

@@ -211,6 +211,7 @@ def validate_request(body, mode):
             kind = block.get("type")
             if kind == "text":
                 _text_blocks([block])
+                _require(bool(block["text"].strip()), "EMPTY_TEXT_UNREPRESENTABLE")
             elif kind == "tool_use" and message["role"] == "assistant":
                 _object(
                     block,

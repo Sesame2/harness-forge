@@ -4,7 +4,43 @@
 
 本页明确区分工作区验证、同机 fresh clone、第二独立环境及真实模型。原 V0 于2026-10-02通过同一冻结commit的本机与独立CI验收；新增OpenAI网关于2026-10-24完成下述Chat/Responses真实全流程，不沿用旧CI结果冒充新功能验收。原生真实Claude smoke仍未运行。
 
+## 混合工具历史修复验收（2026-10-24，Task26–28）
+
+承接 `c6fba08`，不把下节“工具期间不附说明”的旧成功记录当成本次证明。固定LiteLLM v1.103.2的独立顺序补丁参考同版本现成Chat→Responses的text-first策略，仅移动每条assistant消息内既有文本/工具输出步骤；固定源hash、zero-fuzz和全部严格错误处理保留。[成熟方案研究](../research/2026-10-24-responses-tool-history-order.md)
+
+真实上游最小A/B共3次64-token请求：旧映射single mixed HTTP400；新映射single mixed HTTP200、多工具交错文本且反序结果HTTP200。完整UI验收使用简单离线柱图、真实枚举输入与Python计算，明确要求说明与工具同条回复；Responses必须从本次网关实际原始请求验证后的固定marker确认混合历史，否则不能PASS。每Run120秒、8轮、8192单次输出限制不变，无launcher自动重试；模型SHA256前缀仍 `7d963f65d1ed`。
+
+### Responses：混合历史完整PASS
+
+- 自有Compose项目：`harness-forge-openai-smoke-responses-279255c86536d97d907f5e74`；Project `df843e45-d1e5-41c6-9bf1-356357fd657b`。
+- Conversations：`30ef47ea-68a9-46b9-8d0b-5a879613c729`、`0436c7de-d3a0-4a59-8609-2905720925e0`。
+- 三Run：`37c5d4e5-90e1-461e-b55e-a2b716a7b498`、`29424c79-1cb0-40da-a073-a37709b83bee`、`066c971a-1374-4769-8516-53fb2458a927`，均succeeded/finalized；续聊source与首轮candidate相同，第二会话source为null。
+- 主HTML：`2ead27b5-339f-4c52-acd5-1a1475605541`、`f0b54c62-2f7a-4fb2-87f0-d6eebe31e823`、`1bdc058e-3f33-4672-b740-b9e3bd8111db`。
+- 三轮真实Python、原始CSV digest、4行/value_sum54、离线ECharts实例/正尺寸画布/ZRender绘制、版本1→2→1、reload事件重放、会话侧栏隔离均通过；实际网关 `HF_GATEWAY_MIXED_TOOL_HISTORY` 明确出现，launcher返回 `HF_OPENAI_SMOKE_OK`、cleanup=ok。
+- 成功截图 `/var/folders/4n/zbmjjsld3273sjlx1d6fwhp80000gn/T/hf-openai-smoke-066c971a-1374-4769-8516-53fb2458a927.png`，主执行代理已目视检查；临时截图和已销毁卷中的IDs不是运行依赖。
+
+### Chat：完整回归PASS
+
+- 自有Compose项目：`harness-forge-openai-smoke-chat-468b0a79070243cea81abe0c`；Project `b3c87cb1-6932-4e48-9cd3-7a399f699874`。
+- Conversations：`4e29acfd-b89d-4f47-99e3-c74cc5749595`、`f91377ee-7b5e-40b9-89bf-fd7f1be2a9f4`。
+- 三Run：`5bd97774-c062-4923-a418-ad8e6077d11a`、`d42f163c-0307-4966-a4a8-ce9a60ec7af1`、`4c94a261-de07-441e-ae87-9c3babdde312`，均succeeded/finalized；续聊和独立会话SDK来源检查通过。
+- 主HTML：`61c2cde4-c20d-4db5-a58c-8323c225518e`、`c3c37938-4318-478d-90ca-fb79649c5898`、`e10d9424-ca42-4be9-962b-746c0472c7ae`。
+- 与Responses同样的真实Python、digest/4行/value_sum54、实际ECharts绘制、版本/刷新/隔离检查均通过，`HF_OPENAI_SMOKE_OK`、cleanup=ok。成功截图 `/var/folders/4n/zbmjjsld3273sjlx1d6fwhp80000gn/T/hf-openai-smoke-4c94a261-de07-441e-ae87-9c3babdde312.png` 已由主执行代理目视检查。
+
+本轮完整流程Chat共3次、Responses共2次尝试，均未超过计划各3次上限；先前失败IDs及安全诊断保留在[checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)。最终两个新项目的容器/卷/网络均已finally清理，模型凭证与原始上游配置未写入记录。
+
+### 确定性回归与边界
+
+- 默认Go全包、Python290（8.43s）、Vitest108、Node79、纯网关13通过；最终提示更新后Node79再次通过（2.217s）。Ruff、Mypy13源文件、Web生产build、layout、原生及Responses overlay空env Compose、diff check通过。
+- 固定真实网关→严格本地HTTP上游完整5项通过（106.969s）：有效历史6种×stream/nonstream逐项比对出站shape/完整文本/JSON/ID/反序结果/消息与budget边界、SSE终态/usage；原有错误/截断/超时/取消/脱敏合同保留。
+- 真实PostgreSQL/MinIO integration通过，权限用例0.67s，无skip/cached；Fake浏览器E2E5/5（23.4s），含取消、失败保留旧制品及刷新重放，自有资源finally清理。
+- 补测发现固定LiteLLM提前清洗独立空/纯空白text块，现对这种直接块明确HTTP400拒绝、日志记录专用码；正文首尾空白仍保留，不扩展拒绝到system字符串或tool_result.content。纯校验先24子例RED再13项GREEN；HTTP16个负例验证零上游、专用码计数和零mixed marker。HTTP正文仍沿用原有安全通用错误码，不为测试放宽脱敏。
+- 本轮曾有真实工具错误及已发布报告未过浏览器chart闸门，均明确FAIL并清理；最终提示只聚焦简单图表及输入枚举，没有删说明、工具结果或放宽验收。不能把模型生成代码的偶发失败宣称为网关已保证自动修复。
+- 本轮未运行新网关的独立云CI、无缓存fresh clone或原生真实Claude；下节旧V0独立CI仍仅覆盖其冻结SHA。原生thinking/cache/未知语义、tool error等不等价能力继续拒绝，不代表所有Claude或所有上游均兼容。
+
 ## OpenAI 双协议真实验收（2026-10-24）
+
+本节是混合顺序修复前的历史验收；本次最新状态以上节Task26–28为准，保留原始成功/限制证据不改写历史。
 
 使用用户显式授权的本机 `.env`，固定LiteLLM v1.103.2及既定错误处理补丁，两个模式独立新项目/卷依次执行。模型只记SHA256前缀 `7d963f65d1ed`；`OPENAI_DISABLE_THINKING=true`，保持每Run120秒、最大8轮、单次输出8192 tokens，无launcher自动重试。CLI内部恢复分支并非单一retry设置可完全约束，不把SDK美元预算当作第三方精确计费上限。
 
