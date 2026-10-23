@@ -2,9 +2,10 @@
 
 建立日期：2026-10-02，最新验收日期：2026-10-24。已批准范围的实现、Chat/Responses真实全流程及本机回归均通过；不代表任意Claude语义无损、原生真实Claude或新网关独立CI均已验证。主分支交付状态见最新Git记录。
 
-## 2026-10-24 最新 checkpoint：混合工具历史修复验收完成，待Git交付
+## 2026-10-24 最新 checkpoint：Task1–28全部完成，已同步main
 
-- 用户明确要求解除Responses顺序限制、优先成熟方案、真实全流程后同步主分支；本轮从main/实施树均 `c6fba08dffca02ef5b8f9cd12255ab19de064aad` 干净状态恢复。旧Task1–25完成记录保留；本轮Task26–28的实现/真实与回归验收已完成，Git交付状态在下方收口。入口为[新计划Task26–28](../plans/2026-10-24-responses-tool-history-order.md)。
+- 用户明确要求解除Responses顺序限制、优先成熟方案、真实全流程后同步主分支；本轮从main/实施树均 `c6fba08dffca02ef5b8f9cd12255ab19de064aad` 干净状态恢复。旧Task1–25及本轮Task26–28均完成；没有剩余的已批准实施事项。入口为[新计划Task26–28](../plans/2026-10-24-responses-tool-history-order.md)。
+- 已验收实现冻结提交：`7ab65052253600f8345810d8df2e7771e80530af`。已快进主目录main并push，`git ls-remote origin refs/heads/main`确认同一SHA，两工作区均干净；随后的checkpoint完成记录为纯文档提交，不改变该实现。下次说“继续”时先核对本节和Git状态，承接新的需求，不重做旧任务或自动发起收费smoke；未运行的原生真实Claude/独立新网关CI及E2B未来实现不能冒称本轮已验收内容。
 - [成熟方案研究](../../research/2026-10-24-responses-tool-history-order.md)确认：当前固定版、v1.106.2和核查时main均先输出calls再文本；上游PR #45478未合并，恢复原序仍不能覆盖tool后text。采用同版本现成Chat→Responses的text-first策略，只在单条assistant消息内移动既有输出步骤；不切协议、不新建转换器。
 - 原合同只分别比对文本/JSON/ID，mock不会拒绝夹在call/result之间的assistant文本，旧smoke又通过提示避免混合，因此不能证明限制已修复。新增严格实际HTTP反例由子代理RED 8.598s，父级独立RED 8.959s，single mixed、多工具/反序结果、两轮/budget三个场景均HTTP400且只调用一次；未读.env或收费上游。
 - 顺序补丁独立命名、保留原始源hash和zero-fuzz；首次构建因手写patch hunk计数错误明确失败，校正后源hash/双补丁构建成功，没有模型调用。真实新边界流程及最终回归记录如下，不以研究或mock冒充真实完成。
@@ -17,7 +18,7 @@
 - Chat最终PASS：自有项目 `harness-forge-openai-smoke-chat-468b0a79070243cea81abe0c`；Project `b3c87cb1-6932-4e48-9cd3-7a399f699874`；Conversations `4e29acfd-b89d-4f47-99e3-c74cc5749595`、`f91377ee-7b5e-40b9-89bf-fd7f1be2a9f4`；Runs `5bd97774-c062-4923-a418-ad8e6077d11a`、`d42f163c-0307-4966-a4a8-ce9a60ec7af1`、`4c94a261-de07-441e-ae87-9c3babdde312`；主HTML `61c2cde4-c20d-4db5-a58c-8323c225518e`、`c3c37938-4318-478d-90ca-fb79649c5898`、`e10d9424-ca42-4be9-962b-746c0472c7ae`。三轮均succeeded/finalized、cleanup=ok。
 - 两协议均经过真实UI→Go→Docker/SDK→网关→用户上游→Python→离线HTML/ECharts，验证4行/value_sum54、输入digest、实际绘制、SDK续聊来源、独立会话、版本1→2→1及刷新重放。主执行代理已查看两份成功截图，路径及全部证据见[最新验证记录](../../development/verification.md)。最终提示更新后Node79再过（2.217s），无临时生产诊断插桩；独立规格复核无新增问题。
 - 新网关未跑独立云CI、无缓存fresh clone或原生真实Claude；不把旧冻结V0的CI冒充当前实现。E2B、用户认证/多租户、公网部署不在本轮范围，保留既有单用户原型边界。真实工具失败仍明确失败，不保证模型生成脚本永远成功。
-- 提交前staged检查发现统一patch必需空白上下文行的误报；尝试裁减上下文被zero-fuzz构建明确拒绝，未调用模型。恢复原已验收patch，仅用 `.gitattributes` 对网关patch数据文件关闭不适用的空白样式检查，Python等源码检查不变；重建成功，前后实际adapter SHA256均 `dd5a1cc0c25d7a370829acaa0f9f1e9a6269aa5f97bdb876f639c7aa9038d796`，没有改变已真实验收的源码。
+- 提交前staged检查发现统一patch必需空白上下文行的误报；尝试裁减上下文被zero-fuzz构建明确拒绝，未调用模型。恢复原已验收patch，新增顺序patch沿用 `.gitattributes` 既有错误patch约定，仅豁免必需的行尾/EOF空白，原规则及Python等源码检查不变；重建成功，前后实际adapter SHA256均 `dd5a1cc0c25d7a370829acaa0f9f1e9a6269aa5f97bdb876f639c7aa9038d796`，没有改变已真实验收的源码。最终实际HTTP混合历史快合同再过1项（15.721s）。
 - 本轮5个真实smoke项目、integration、e2e、gateway-contract及合成诊断的最终容器/卷/网络复查均0；既有开发资源未删除。真实key/URL/模型原值未出现在变更中，主目录.env仍600/忽略/未跟踪；只提交公开研究、代码和脱敏证据。
 
 ## 2026-10-24 顺序修复前交付 checkpoint（历史）
