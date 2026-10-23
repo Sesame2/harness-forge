@@ -89,5 +89,7 @@
   用主目录 `.env`，明确 `chat` 然后 `responses`，每模式独立 project/端口/卷，不复用默认开发卷。单轮有超时/输出/turn 上限，每失败最多三次定位修复后重测；仍失败时记录安全错误及反例，不跨协议 fallback、不隐藏失败。只向用户指定上游发送合成资料。
 - [x] **Step 4: 全量离线和应用回归。**
   `make test`、`make test-gateway`、`make test-integration`、`make test-e2e`、`pnpm --dir apps/web build`、`make verify-layout`、空 env Compose config 和 `git diff --check`。父级验证自有测试资源全部清理。
-- [ ] **Step 5: 记录、最终审查、同步主分支。**
+- [x] **Step 5: 记录、最终审查、同步主分支。**
   记录真实/替身证据来源、代码 SHA、固定镜像、协议、脱敏模型、Run/Artifact IDs、结果与限制，不记 key/原始敏感报文。审查通过后提交，按既有授权快进 main 并 push；核对远端及两个工作区状态。原生真实 Claude 未测试须单列，不能以 OpenAI smoke 替代声明。仅当所有已批准硬闸门满足才勾选完成。
+
+2026-10-24完成记录：实现提交 `f1403223eaa8af99a149a7d7b30a0b19fe68153e` 已快进main/push并核对远端SHA；两模式各3Run/2会话真实验收、本机完整回归及资源清理均通过。最新轮由主代理做规格/安全/相关调用者自查，无新增独立审查代理；未运行新网关独立CI或原生真实Claude，当前上游限制见[checkpoint](../checkpoints/2026-10-02-openai-gateway.md)。后续只记录交付，不自动重做收费测试。

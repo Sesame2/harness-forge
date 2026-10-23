@@ -38,7 +38,7 @@
 - Runtime依赖构建使用本机BuildKit uv下载缓存及相同frozen lock；不是无缓存/禁网/第二独立环境。未针对新网关运行独立云CI或原生真实Claude。旧V0独立CI证据范围保持不变。
 - 更详细的安全失败IDs、费用边界和恢复入口见[checkpoint](../superpowers/checkpoints/2026-10-02-openai-gateway.md)。
 
-最终离线回归及交付代码SHA在checkpoint记录；真实模型通过不替代默认测试、严格mock合同和资源归属检查。
+交付实现提交为 `f1403223eaa8af99a149a7d7b30a0b19fe68153e`；后续纯文档提交不改变实现。最终本机默认回归Go全包、Python290、Vitest108、Node73、纯网关11通过；固定网关实际mock合同4项（98.070s）、真实integration（权限0.58s）、Fake E2E5/5（23.5s）、Ruff/Mypy/build/layout/空env Compose及diff check均通过，自有容器/卷/网络复查为空。真实模型通过不替代默认测试、严格mock合同和资源归属检查。更多历史与Git恢复状态见checkpoint。
 
 ## 当前冻结版本：两环境验收通过（2026-10-02）
 

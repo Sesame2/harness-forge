@@ -2,6 +2,12 @@
 
 建立日期：2026-10-02，最新验收日期：2026-10-24。已批准范围的实现、Chat/Responses真实全流程及本机回归均通过；不代表任意Claude语义无损、原生真实Claude或新网关独立CI均已验证。主分支交付状态见最新Git记录。
 
+## 2026-10-24 交付 checkpoint
+
+- 功能实现冻结提交：`f1403223eaa8af99a149a7d7b30a0b19fe68153e`。已快进主目录main并push；`git ls-remote origin refs/heads/main`核实同一SHA。该提交包含本页下述全部运行时代码和回归，后续提交仅完成验收记录/计划checkbox，不改变实现。
+- Task1–25已批准范围没有剩余实施任务。后续说“继续”时，先核对本页与Git状态，从新的需求开始；不要自动重做历史任务或再次发起收费smoke。E2B仍只是预留接口，不是本轮未完成事项。
+- 真实配置仍仅在主目录 `.env`（600、忽略、未跟踪），本轮仅显式增加 `OPENAI_DISABLE_THINKING=true`。提交前扫描确认真实key/URL/模型值均未进入staged diff；临时测试数据已销毁。上游限制与未测范围保留在下述记录，不能用“任务完成”覆盖这些边界。
+
 ## 2026-10-23–24 恢复与验证
 
 - 恢复起点 main/origin/实施分支均为 `7a9f135565658927fed29cc9e3b92a0b2c207823`，保留未提交的 Task25 UI smoke 代码。
@@ -9,7 +15,7 @@
 - 最新默认测试通过：Go 全包、Python288（5.79s）、Vitest108/15、Node smoke28/launcher42、网关纯校验9；production build/layout 通过。新增预算白名单反例后网关纯测试为10项且通过。
 - 已确认 SDK 的 `max_budget_usd` 会在消息历史插入非空 system 字符串。保留预算，允许此窄文本形状；Chat 使用固定转换器的 `model_info.supports_mid_conversation_system` 能力声明。实际 HTTP 合同先 RED，再两协议 GREEN（79.990s），逐项检查预算文字、角色和顺序；没有修改正常映射补丁。
 - 用户上游连通性本轮复测：Chat/Responses 均 HTTP200；模型 SHA256 前缀均 `7d963f65d1ed`，各64输出token上限。真实 key 未输出；主目录.env仍600且被Git忽略。
-- Chat 第1次真实 UI 尝试项目 `harness-forge-openai-smoke-chat-7159f0fe032c2a66f2bf455f`：Run `ed929dca-c99f-4d26-bdb6-97f533a5ef23`，Conversation `320ca4a5-3073-4cec-b824-48a62acc8d23`，模型已输出文本并开始工具调用，随后 worker_failed，未发布制品；自有 Compose 资源已清理。正在定位 SDK/Runtime 事件失败，不能记为通过。
+- Chat 第1次真实 UI 尝试项目 `harness-forge-openai-smoke-chat-7159f0fe032c2a66f2bf455f`：Run `ed929dca-c99f-4d26-bdb6-97f533a5ef23`，Conversation `320ca4a5-3073-4cec-b824-48a62acc8d23`，模型已输出文本并开始工具调用，随后 worker_failed，未发布制品；自有 Compose 资源已清理。该次失败保留为历史证据，后续根因/修复见下一项。
 - 根因已在离线真实 SDK→ProcessManager 闭环复现：父进程 `model_dump()` 补入缺省的 `error=None/output=None`，重新验证时失败。两处统一改为 `exclude_none=True`；成功/失败工具结果各一个真实子进程回归先 RED 后 GREEN，且工具 input 的合法 null 保留。离线真实 SDK 已完成工具执行、制品校验和 candidate durable ACK，临时诊断已移除。
 - 修复后默认测试再次通过：Python290（9.86s）、Vitest108、Node70、网关纯测试10；Ruff/Mypy13源文件、build/layout/空 env Compose/diff check 通过。真实 PostgreSQL/MinIO 集成通过，权限测试0.68s；Fake E2E 隔离重跑5/5（21.8s）。首次并行负载下重放测试的延迟窗口被越过，4/5，保留这次失败记录，不改产品或放宽断言。
 - Runtime 镜像重装相同依赖时，下载耗时超过10分钟，启动在模型调用前超时；随后使用 BuildKit uv 包缓存，仍 frozen 安装同一 uv.lock。缓存由本机原有已验证 Runtime 镜像中的包缓存预热，非复制真实配置；本次依赖安装7秒完成，不计作全新独立环境或禁网 fresh build。
@@ -39,7 +45,7 @@
 - `f7cfa91`：新增经规格与质量双审查的仅手动 Fake CI，已同步 main/远端。
 - `c85695f`：成熟方案调研及已审查中文规格；`317921d`：已审查实施计划。
 - `2acd55be1d59c422d4b7e7fa2250937d202ddd04`：同 SHA 双环境 V0 验收与后续 Runtime 安全要求已同步 main/远端，主目录干净；新增网关及 Runtime 工作继续在既有实施工作树。
-- `529a11a94d0693442b6d3edd8ee1ecef0689bbce`：严格双协议网关及真实 mock 合同已提交并同步 main/远端。代码质量审查已通过；system 分块格式边界仍单独记录为待答复。
+- `529a11a94d0693442b6d3edd8ee1ecef0689bbce`：严格双协议网关及真实 mock 合同已提交并同步 main/远端。代码质量审查已通过；当时system分块格式边界曾待答复，当前以已确认规格及2026-10-23–24记录为准，不再是待办。
 - `df394b836d1e9c51af5ae99ca46ef2d0ff7e03b7`：模型后端身份及 Runtime 会话隔离已提交并同步 main/远端。
 - 新任务执行入口：[OpenAI 网关计划 Task23–25](../plans/2026-10-02-openai-gateway.md)。用户已批准，不重复询问两个协议或兼容范围。
 
