@@ -4,6 +4,18 @@
 
 本页明确区分工作区验证、同机 fresh clone、第二独立环境及真实模型。原 V0 于2026-10-02通过同一冻结commit的本机与独立CI验收；新增OpenAI网关于2026-10-24完成下述Chat/Responses真实全流程，不沿用旧CI结果冒充新功能验收。原生真实Claude smoke仍未运行。
 
+## 工具失败有界修复与50轮Geo Profile（2026-10-25，Task29–31）
+
+最新完整证据和恢复入口：[工具自修复 checkpoint](../superpowers/checkpoints/2026-10-25-tool-recovery.md)。本次按用户授权将工具失败由直接拒绝改为显式错误JSON封装；每Run前2个失败结果返回模型供修正，第三个停止。两协议固定LiteLLM零fuzz窄补丁，未增加转换器。Geo Profile按最新用户要求50轮，单次输出8192和预算配置2.0保持；公开HTTPS数据获取获用户批准，报告仍离线，来源/精度必须披露。网络策略不是防火墙，美元预算不是第三方精确费用上限。
+
+- 默认Go全包、Python299（最后安全错误分类回归6.05s）、Vitest109、Node79、纯网关14、Ruff/Mypy13源文件、Web production build/layout/diff check通过。已知Starlette/httpx弃用和Node localstorage警告未升级依赖，不影响结果。
+- 实际固定网关连接本地严格HTTP上游7项通过（125.210s），最终重复7/7（112.600s）：Chat/Responses失败历史的stream/nonstream、字符串/文本块列表/缺省content与调用ID关联；此前错误/截断/取消/未知字段等拒绝闸门仍保留。不是付费模型验收替代。
+- 真实PostgreSQL/MinIO integration完整通过（权限0.58s，无skip/cache），Fake浏览器E2E5/5（25.0s）；自有临时资源已清理并复查0。Fake不冒充真实模型。
+- 普通自然提问“请分析项目资料里各地点的 value，给我一个图表和总结。”真实Chat Run `6dcd9a57-d2e3-48f4-91a6-b6ef57b5c003` succeeded/finalized：两次AttributeError均返回模型，由其Edit修正后发布。evidence输入digest与实际Project input API一致、4行/value_sum54；4个GeoJSON坐标和值一致。主HTML `b9a8e91f-1050-4cc2-8497-44afc3e709e6`，浏览器ECharts674×400/35绘制对象，2条具体错误自动展开，无pageerror/外部请求。主代理已查看 `/tmp/hf-tool-recovery-ordinary.png`。
+- 原始三亚提问保持原样。加入已核验公开官方Ocean裁剪GeoJSON后，Run `35bb3bc8-49ae-44d7-a322-6d84b4787e7d`真实PASS，模型两次工具失败后自行修正并发布；主HTML `783451ec-cad5-424e-bc7c-c0c391c557a4`，GeoJSON `0c8099c5-9999-4601-9a3f-869840b1e91c`。独立几何检查与官方裁剪结果完全相等、有效非空1要素，两输入digest一致，独立UTM面积4201.73km²一致。图表662×460/48绘制对象及662×300/33对象，无页面错误/外部请求；下载attachment HTTP200、刷新重放2个具体错误通过。已目视检查地图截图。来源/公共领域许可/1:1000万/不含完整内陆水系/非行政边界已披露；不是高精度三亚官方水域调查。
+- 多次失败、主动取消、公开数据准备及全部结果逐项记录于checkpoint；不把中间GeoJSON或Run状态单独当作地图验收成功。真实任务通过API提交，浏览器验证页面重放及制品；没有声称实际点击UI发送。真实UI发送链另由既有smoke和本轮Fake E2E覆盖。
+- 本次新增错误封装的付费自然任务使用Chat；Responses有本次实际网关HTTP合同，旧双协议真实全流程证据属于下节历史。未重跑新网关独立云CI、原生真实Claude或无缓存fresh clone，不冒称所有Claude专有语义无损。
+
 ## 混合工具历史修复验收（2026-10-24，Task26–28）
 
 承接 `c6fba08`，不把下节“工具期间不附说明”的旧成功记录当成本次证明。固定LiteLLM v1.103.2的独立顺序补丁参考同版本现成Chat→Responses的text-first策略，仅移动每条assistant消息内既有文本/工具输出步骤；固定源hash、zero-fuzz和全部严格错误处理保留。[成熟方案研究](../research/2026-10-24-responses-tool-history-order.md)

@@ -8,7 +8,7 @@ tools:
   disallowed: [WebFetch, WebSearch, NotebookEdit]
   permission_mode: default
 agent:
-  max_turns: 8
+  max_turns: 50
   max_budget_usd: 2.0
 inputs:
   accepted_media_types: [text/csv, application/geo+json]

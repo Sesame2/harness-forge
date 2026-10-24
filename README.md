@@ -47,6 +47,10 @@ node scripts/openai.mjs dev --api chat
 
 ## 测试
 
+Geo Profile 现在允许通过 Bash/Python 获取任务所需的公开权威 HTTPS 数据，并在报告中披露来源、许可、精度和范围；报告资源仍必须离线可用。该约束是模型策略，不是 Docker 出站防火墙。按用户要求每 Run 最多50轮；工具失败最多放行2次供修正，第三次明确停止，具体安全错误自动展开。不会自动重开付费任务，不保证每次模型代码都能修复成功。
+
+2026-10-25已完成普通自然提问及三亚原提问的真实Chat回归，均经历两次工具错误后由模型修正并发布；三亚使用已核验公开海洋图层，是近海概览而非精细/完整内陆水域。完整来源、失败历史及恢复入口见[最新checkpoint](docs/superpowers/checkpoints/2026-10-25-tool-recovery.md)。
+
 ```sh
 make verify-layout
 make test

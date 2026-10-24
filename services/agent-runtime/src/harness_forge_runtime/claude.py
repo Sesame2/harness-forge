@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 from uuid import UUID
 
@@ -31,6 +32,47 @@ class ClaudeAdapterError(Exception):
     """Safe failure boundary: never expose raw SDK errors or private config."""
 
     code = "claude_stream_failed"
+
+    def __init__(self, message: str, *, code: str = "claude_stream_failed") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def tool_error_summary(output: str) -> str:
+    """Expose error categories and source locations, never arbitrary tool text."""
+    explanations = {
+        "SyntaxError": "Python语法错误",
+        "IndentationError": "Python缩进错误",
+        "ModuleNotFoundError": "缺少Python依赖",
+        "ImportError": "Python导入失败",
+        "FileNotFoundError": "文件不存在",
+        "PermissionError": "文件访问被拒绝",
+        "NameError": "变量未定义",
+        "KeyError": "字段不存在",
+        "TypeError": "数据类型错误",
+        "AttributeError": "对象不支持该属性或方法",
+        "ValueError": "数据值不符合要求",
+        "IndexError": "索引越界",
+        "AssertionError": "计算校验未通过",
+        "TimeoutError": "工具执行超时",
+    }
+    text = output[-65536:]
+    matches = list(re.finditer(r"(?m)^(" + "|".join(explanations) + r")(?::|$)", text))
+    if matches:
+        kind = matches[-1][1]
+        locations = re.findall(r'File "([^"\n]+)", line ([0-9]+)', text)
+        location = ""
+        if locations:
+            name = Path(locations[-1][0]).name
+            if re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name):
+                location = f"（{name}:{locations[-1][1]}）"
+        return f"{kind}{location}：{explanations[kind]}"
+    exit_code = re.search(r"(?i)exit code[: ]+([0-9]{1,3})\b", text)
+    return (
+        f"工具命令失败，退出码{exit_code[1]}"
+        if exit_code
+        else "工具执行失败（未提供可安全展示的异常类型）"
+    )
 
 
 @dataclass(frozen=True)
@@ -64,6 +106,8 @@ class ClaudeAdapter:
         candidate: str | None = None
         got_result = False
         tool_names: dict[str, str] = {}
+        tool_failures = 0
+        last_tool_error = ""
         try:
             source = request.source_sdk_session_id
             if source is not None and str(UUID(source)) != source:
@@ -210,11 +254,30 @@ class ClaudeAdapter:
                                 "name": name,
                                 "outcome": "failed" if block.is_error else "succeeded",
                             }
+                            if block.is_error:
+                                tool_failures += 1
+                                last_tool_error = tool_error_summary(output)
                             payload["error" if block.is_error else "output"] = (
-                                "Tool execution failed" if block.is_error else output
+                                last_tool_error if block.is_error else output
                             )
                             yield NormalizedEvent("tool.completed", payload)
+                            if tool_failures > 2:
+                                raise ClaudeAdapterError(
+                                    "工具自修复已达到2次上限；最近错误："
+                                    + last_tool_error,
+                                    code="tool_recovery_limit",
+                                )
                 elif isinstance(message, ResultMessage):
+                    if message.subtype == "error_max_turns":
+                        raise ClaudeAdapterError(
+                            f"已达到本次运行{request.limits.max_turns}轮上限；"
+                            + last_tool_error,
+                            code="agent_turn_limit",
+                        )
+                    if message.subtype == "error_max_budget_usd":
+                        raise ClaudeAdapterError(
+                            "已达到本次运行预算上限", code="agent_budget_limit"
+                        )
                     if (
                         message.session_id != candidate
                         or message.is_error

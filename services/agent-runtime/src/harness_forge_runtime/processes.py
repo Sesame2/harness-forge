@@ -366,7 +366,9 @@ class ProcessManager:
                     event  # Withhold until clean EOF and successful process exit.
                 )
             else:
-                self._publish(handle, event.type, event.model_dump(exclude_none=True)["payload"])
+                self._publish(
+                    handle, event.type, event.model_dump(exclude_none=True)["payload"]
+                )
         return terminal
 
     async def _stderr(self, handle: WorkerRun, stream: BinaryIO) -> None:
@@ -515,7 +517,19 @@ class ProcessManager:
                 try:
                     if success and terminal is not None and not handle.cancelled:
                         self._publish(
-                            handle, terminal.type, terminal.model_dump(exclude_none=True)["payload"]
+                            handle,
+                            terminal.type,
+                            terminal.model_dump(exclude_none=True)["payload"],
+                        )
+                    elif (
+                        terminal is not None
+                        and terminal.type == "agent.failed"
+                        and not handle.cancelled
+                    ):
+                        self._publish(
+                            handle,
+                            terminal.type,
+                            terminal.model_dump(exclude_none=True)["payload"],
                         )
                     else:
                         self._publish(

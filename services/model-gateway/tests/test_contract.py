@@ -18,7 +18,7 @@ IMAGE = "hf-model-gateway-contract:task23"
 
 
 class GatewayContract(unittest.TestCase):
-    def check_mode(self, mode, disable_thinking=False, history_only=False):
+    def check_mode(self, mode, disable_thinking=False, history_only=False, tool_error_only=False):
         requests = []
         scenario = ["text"]
         cancelled = threading.Event()
@@ -637,6 +637,25 @@ class GatewayContract(unittest.TestCase):
                 )
                 return
             self.assertNotIn(thinking_key, requests[0][2])
+            if tool_error_only:
+                failure = [{"type": "text", "text": "  SyntaxError: unmatched bracket\n"}]
+                for stream in (False, True):
+                    for content in (failure, failure[0]["text"], None):
+                        result = {"type": "tool_result", "tool_use_id": "call-repair", "is_error": True}
+                        if content is not None:
+                            result["content"] = content
+                        status, output = call({"stream": stream, "messages": [
+                            {"role": "user", "content": "analyze"},
+                            {"role": "assistant", "content": [{"type": "tool_use", "id": "call-repair", "name": "lookup", "input": {}}]},
+                            {"role": "user", "content": [result]},
+                        ]})
+                        self.assertEqual(status, 200, output)
+                        sent = requests[-1][2]
+                        item = next(item for item in sent["messages" if mode == "chat" else "input"] if item.get("role") == "tool" or item.get("type") == "function_call_output")
+                        self.assertEqual(item["tool_call_id" if mode == "chat" else "call_id"], "call-repair")
+                        encoded = json.loads(item["content" if mode == "chat" else "output"])
+                        self.assertEqual(encoded, {key: value for key, value in result.items() if key in {"content", "is_error"}})
+                return
             if history_only:
                 scenario[0] = "mixed-history"
 
@@ -921,21 +940,6 @@ class GatewayContract(unittest.TestCase):
                                     "type": "thinking",
                                     "thinking": "secret",
                                     "signature": "native",
-                                }
-                            ],
-                        }
-                    ]
-                },
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": "call-1",
-                                    "content": "bad",
-                                    "is_error": True,
                                 }
                             ],
                         }
@@ -1390,6 +1394,12 @@ asyncio.run(main())"""
 
     def test_responses_mixed_tool_history(self):
         self.check_mode("responses", history_only=True)
+
+    def test_chat_tool_error_history(self):
+        self.check_mode("chat", tool_error_only=True)
+
+    def test_responses_tool_error_history(self):
+        self.check_mode("responses", tool_error_only=True)
 
     def test_chat_thinking_explicitly_disabled(self):
         self.check_mode("chat", disable_thinking=True)

@@ -65,6 +65,20 @@ it('restores the phase history without regressing the authoritative finished Run
   expect(runs.items[0]!.status).toBe('succeeded')
 })
 
+it('opens failed tool diagnostics and explains bounded self-recovery without hiding final failure', async () => {
+  const { wrapper, runs } = timeline({ ...queuedRun, status: 'running', phase: 'agent' })
+  runs.apply(runEvent(1, 'tool.started', { tool_call_id: 'bad', name: 'Bash', input: { command: 'python analysis.py' } }))
+  runs.apply(runEvent(2, 'tool.completed', { tool_call_id: 'bad', name: 'Bash', outcome: 'failed', error: 'SyntaxError（analysis.py:57）：Python语法错误' }))
+  await wrapper.vm.$nextTick()
+  expect(wrapper.get('details').attributes('open')).toBeDefined()
+  expect(wrapper.text()).toContain('analysis.py:57')
+  expect(wrapper.text()).toContain('最多2次')
+  expect(wrapper.text()).toContain('达到次数、轮数或预算上限即停止')
+  runs.upsert({ ...queuedRun, status: 'failed', error: { code: 'tool_recovery_limit', message: '工具自修复已达到2次上限；SyntaxError（analysis.py:57）' } })
+  await wrapper.vm.$nextTick()
+  expect(wrapper.get('[role="alert"]').text()).toContain('SyntaxError')
+})
+
 it('does not regress finalization when an older cancellation response arrives after the terminal event refresh', () => {
   const finalized = { ...queuedRun, status: 'cancelled' as const, finalized_at: '2026-09-14T09:00:00Z' }
   const { runs } = timeline(finalized)

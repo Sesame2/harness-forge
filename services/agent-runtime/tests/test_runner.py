@@ -46,6 +46,37 @@ def fixture_run(tmp_path: Path, source=None):
 
 
 @pytest.mark.asyncio
+async def test_worker_retains_safe_recovery_limit_reason(tmp_path, monkeypatch):
+    module = runner_module()
+    import harness_forge_runtime.claude as claude
+
+    turn, settings = fixture_run(tmp_path)
+    output = io.StringIO()
+
+    async def query(**kwargs):
+        raise claude.ClaudeAdapterError(
+            "工具自修复已达到2次上限；SyntaxError（analysis.py:57）",
+            code="tool_recovery_limit",
+        )
+        yield
+
+    async def control(*args):
+        pass
+
+    monkeypatch.setattr(claude, "query", query)
+    assert (
+        await module.run_worker(
+            turn, settings, (), control, stdout=output, stderr=io.StringIO()
+        )
+        == 1
+    )
+    event = RuntimeEvent.model_validate_json(output.getvalue())
+    assert event.type == "agent.failed"
+    assert event.payload.code == "tool_recovery_limit"
+    assert "analysis.py:57" in event.payload.message
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure",
     [
@@ -144,7 +175,10 @@ async def test_worker_ack_order_and_one_safe_terminal(tmp_path, monkeypatch, fai
 
 
 @pytest.mark.asyncio
-async def test_worker_manifest_and_fork_use_real_normalization(tmp_path, monkeypatch):
+@pytest.mark.parametrize("recover", [False, True])
+async def test_worker_manifest_and_fork_use_real_normalization(
+    tmp_path, monkeypatch, recover
+):
     module = runner_module()
     import harness_forge_runtime.claude as claude
     from claude_agent_sdk import ToolResultBlock, ToolUseBlock, UserMessage
@@ -173,6 +207,26 @@ async def test_worker_manifest_and_fork_use_real_normalization(tmp_path, monkeyp
         assert options.resume == source and options.fork_session
         assert (bucket / f"{source}.jsonl").read_bytes() == b"source unchanged"
         yield SystemMessage(subtype="init", data={"session_id": candidate})
+        if recover:
+            yield AssistantMessage(
+                content=[
+                    ToolUseBlock(
+                        id="failed",
+                        name="Bash",
+                        input={"command": "python analysis.py"},
+                    )
+                ],
+                model="fake",
+            )
+            yield UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="failed",
+                        content='File "analysis.py", line 57\nSyntaxError: unmatched bracket',
+                        is_error=True,
+                    )
+                ]
+            )
         yield AssistantMessage(
             content=[
                 ToolUseBlock(id="read", name="Read", input={"file_path": "input.txt"})
@@ -197,8 +251,9 @@ async def test_worker_manifest_and_fork_use_real_normalization(tmp_path, monkeyp
         == 0
     )
     events = [json.loads(line) for line in stdout.getvalue().splitlines()]
-    assert [event["type"] for event in events] == [
-        "phase.changed",
+    assert [event["type"] for event in events] == ["phase.changed"] + (
+        ["tool.started", "tool.completed"] if recover else []
+    ) + [
         "tool.started",
         "tool.completed",
         "artifact.candidate",
@@ -209,6 +264,9 @@ async def test_worker_manifest_and_fork_use_real_normalization(tmp_path, monkeyp
         "artifacts": [artifact],
     }
     assert (old / f"{source}.jsonl").read_bytes() == b"source unchanged"
+    if recover:
+        assert events[2]["payload"]["outcome"] == "failed"
+        assert "analysis.py:57" in events[2]["payload"]["error"]
 
 
 @pytest.mark.asyncio

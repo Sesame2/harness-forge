@@ -4,6 +4,17 @@ import json
 import re
 
 
+def tool_result_content(block):
+    """Keep failed tool status explicit in OpenAI's string-valued tool output."""
+    if block.get("is_error") is True:
+        return json.dumps(
+            {key: value for key, value in block.items() if key in {"is_error", "content"}},
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    return block.get("content")
+
+
 def _require(condition, code="UNSUPPORTED_REQUEST"):
     if not condition:
         raise ValueError("HF_GATEWAY_" + code)
@@ -234,8 +245,7 @@ def validate_request(body, mode):
                     isinstance(block["tool_use_id"], str) and bool(block["tool_use_id"])
                 )
                 _require(
-                    "is_error" not in block or block["is_error"] is False,
-                    "TOOL_ERROR_UNREPRESENTABLE",
+                    "is_error" not in block or type(block["is_error"]) is bool,
                 )
                 if "content" in block:
                     _text_blocks(block["content"])

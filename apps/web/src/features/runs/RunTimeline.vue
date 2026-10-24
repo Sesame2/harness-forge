@@ -42,11 +42,12 @@ const steps = computed(() => {
     <p v-if="run.status === 'running' && run.phase === 'publishing'" class="run-note">正在发布，无法取消。请等待制品与运行状态确认。</p>
     <p v-else-if="!['queued', 'running'].includes(run.status) && !run.finalized_at" class="run-note">正在确认运行结束…</p>
     <ol v-if="phases.length" class="run-phases" aria-label="运行阶段"><li v-for="phase in phases" :key="phase.sequence">{{ phase.label }}</li></ol>
-    <details v-for="step in steps" :key="step.id" class="tool-step">
+    <details v-for="step in steps" :key="step.id" class="tool-step" :open="step.outcome === 'failed'">
       <summary>{{ step.name }} <span>{{ step.outcome === 'succeeded' ? '完成' : step.outcome === 'failed' ? '失败' : '进行中' }}</span></summary>
       <pre v-if="step.input !== undefined">{{ JSON.stringify(step.input, null, 2) }}</pre>
       <pre v-if="step.output">{{ step.output }}</pre>
       <p v-if="step.error" class="error-message">{{ step.error }}</p>
+      <p v-if="step.outcome === 'failed' && run.status === 'running'" class="run-note">工具失败，本次运行最多2次自修复；达到次数、轮数或预算上限即停止。</p>
     </details>
     <p v-if="run.error" role="alert" class="error-message">{{ run.error.message }} <span>关联 ID：{{ run.error.request_id || run.id }}</span></p>
     <p v-if="store.connectionErrors.get(run.id)" role="status" class="run-note">{{ store.connectionErrors.get(run.id) }}</p>

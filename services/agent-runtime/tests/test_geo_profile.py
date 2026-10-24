@@ -35,7 +35,7 @@ def test_profile_policy_and_prompt():
             "disallowed": ["WebFetch", "WebSearch", "NotebookEdit"],
             "permission_mode": "default",
         },
-        "agent": {"max_turns": 8, "max_budget_usd": 2.0},
+        "agent": {"max_turns": 50, "max_budget_usd": 2.0},
         "inputs": {"accepted_media_types": ["text/csv", "application/geo+json"]},
         "artifacts": {
             "manifest_schema_version": 1,
@@ -64,8 +64,14 @@ def test_profile_policy_and_prompt():
         "input_digest",
         "row_count",
         "computed_fields",
+        "public authoritative data",
+        "source URL",
+        "downloaded bytes",
+        "Never fabricate geometry",
     ):
         assert required in prompt
+    assert "Do not access\nthe network" not in prompt
+    assert "or outside sources" not in prompt
 
 
 def test_dependency_lock_and_runtime_user():

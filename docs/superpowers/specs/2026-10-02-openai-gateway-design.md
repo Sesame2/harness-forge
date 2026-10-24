@@ -44,7 +44,9 @@ Chat 模式打开 `use_chat_completions_url_for_anthropic_messages`，拒绝可�
 
 首批范围是地理分析所需的文本与本地 function 工具，CSV/GeoJSON 是沙箱输入文件，不是模型多模态输入。
 
-允许 system/user/assistant 文本、成功的 tool result、tool use 的 name/ID/JSON 参数、工具 schema、流式或非流式、多工具及多轮历史。必须保留所有文本及其空白、同类内容的相对次序、调用关联和参数值。用户于2026-10-23批准跨种类块顺序规范化，并于2026-10-24进一步要求解决Responses混合工具历史限制：Chat继续连接assistant文本并保留tool_calls；Responses参考同版本成熟Chat→Responses策略，在每一条assistant消息内先追加全部原文本、再追加全部原function_call。不得跨Message重排，不增加第二套转换器。两者仍将tool result放在同条user文本之前。`is_error=true`没有等价字段时仍明确失败，不假装普通成功结果。
+允许 system/user/assistant 文本、tool result、tool use 的 name/ID/JSON 参数、工具 schema、流式或非流式、多工具及多轮历史。必须保留所有文本及其空白、同类内容的相对次序、调用关联和参数值。用户于2026-10-23批准跨种类块顺序规范化，并于2026-10-24进一步要求解决Responses混合工具历史限制：Chat继续连接assistant文本并保留tool_calls；Responses参考同版本成熟Chat→Responses策略，在每一条assistant消息内先追加全部原文本、再追加全部原function_call。不得跨Message重排，不增加第二套转换器。两者仍将tool result放在同条user文本之前。
+
+2026-10-25用户批准放宽工具失败边界：仅对 `is_error:true` 的结果，将原content（字符串、文本块列表或未提供）与显式错误状态封装为JSON字符串，Chat的tool.content及Responses的function_call_output.output复用成熟转换器，调用ID关联不变；不伪装为成功，也不承诺原生错误字段等价。`is_error`若提供必须为布尔值。Runtime每Run最多允许2个失败工具结果供模型修正，第三个明确终止，无自动新Run、协议切换或上游fallback。Geo Profile按用户最新要求最大50轮，预算配置2.0、兼容模式输出8192不变；SDK美元预算不代表第三方精确费用硬上限。工具步骤只公开安全异常类别/文件名/行号或退出码；终态保留工具纠错、轮数或预算耗尽的安全原因，未知异常仍脱敏。
 
 该顺序修补独立保存为 `responses-history-order.patch`，在固定adapter原始SHA256校验及zero-fuzz之后应用，和既有错误处理补丁分开维护。它是参考成熟策略的本地窄映射修复，不冒称已合并上游PR。最新release仍有缺陷；上游恢复原块顺序的未合并PR不能完整适配当前上游tool后text场景，依据见[本轮研究](../../research/2026-10-24-responses-tool-history-order.md)。
 
@@ -63,7 +65,7 @@ usage 仅映射上游实际返回的计数，不承诺不同 tokenizer/计费等
 ## 验收与费用边界
 
 1. 先离线：真实固定版转换器连接本地 mock 上游，逐项断言两模式的实际 HTTP path/body/鉴权、文本/工具/历史及 SSE；mock 明确拒绝另一协议，防止路由假通过。
-2. 反例必须在上游调用前拒绝：未知字段/块、cache_control、native thinking、工具错误状态、不可映射参数。额外验证 reasoning 不被 strip-and-retry、错误/截断/取消不成功。
+2. 反例必须在上游调用前拒绝：未知字段/块、cache_control、native thinking、非布尔工具错误状态、不可映射参数。失败工具输出的显式JSON封装在两协议、流/非流下验证状态/content/ID；额外验证 reasoning 不被 strip-and-retry、错误/截断/取消不成功。
 3. 再真实：每协议使用独立临时项目和合成 CSV，经过浏览器/Go/真实 Docker Runtime/SDK/网关/用户模型，产生真实 Python 工具执行、分析证据 JSON、合法 manifest 和离线 HTML/ECharts 制品。
 4. 两协议各验证首轮、续聊产生第二版本、另一个会话隔离、刷新重放、制品版本切换、取消与失败保留旧制品。Responses真实验收不再用“工具期间不附说明”绕开混合历史；必须从同一测试项目的网关原始请求校验后安全标记确认发生过assistant文本+tool_use同条历史，否则失败。可控失败/崩溃场景仍以确定性合同和既有集成/E2E为主要证据，不要求付费模型碰运气触发。
 5. 真实执行设置有界输出、最大轮数、单次超时和有限重试次数；先每协议一个最小工作流，再仅针对失败修复复测，不进行无界收费循环。SDK 的 Anthropic budget 不能当作第三方上游精确费用上限。

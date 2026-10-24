@@ -83,6 +83,108 @@ def result(candidate):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failures", [1, 2, 3])
+async def test_tool_errors_are_visible_and_recovery_stops_after_two_attempts(
+    monkeypatch, failures
+):
+    module = adapter_module()
+    candidate = str(uuid4())
+    diagnostic = 'File "/private/workspace/analysis.py", line 57\nSyntaxError: unmatched bracket SECRET_CONTENT\nAuthorization: Bearer fixture-private'
+
+    async def query(*, prompt, options):
+        assert options.max_turns == 8
+        yield SystemMessage(subtype="init", data={"session_id": candidate})
+        for index in range(failures):
+            yield AssistantMessage(
+                content=[
+                    ToolUseBlock(
+                        id=f"call-{index}",
+                        name="Bash",
+                        input={"command": "python analysis.py"},
+                    )
+                ],
+                model="fake",
+            )
+            yield UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id=f"call-{index}",
+                        content=[{"type": "text", "text": diagnostic}],
+                        is_error=True,
+                    )
+                ]
+            )
+        yield AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="fixed", name="Bash", input={"command": "python fixed.py"}
+                )
+            ],
+            model="fake",
+        )
+        yield UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="fixed", content="fixed", is_error=False)
+            ]
+        )
+        yield result(candidate)
+
+    async def ack(value):
+        pass
+
+    monkeypatch.setattr(module, "query", query)
+    adapter = module.ClaudeAdapter(
+        claude_config_dir=Path("/sessions/claude"), baseline_session_ids=()
+    )
+    events = []
+
+    async def collect():
+        async for event in adapter.stream_turn(request(), ack):
+            events.append(event)
+
+    if failures == 3:
+        with pytest.raises(module.ClaudeAdapterError) as error:
+            await collect()
+        assert error.value.code == "tool_recovery_limit"
+        assert not any(event.payload.get("tool_call_id") == "fixed" for event in events)
+    else:
+        await collect()
+        assert events[-1].payload["outcome"] == "succeeded"
+    failed = [
+        event.payload
+        for event in events
+        if event.type == "tool.completed" and event.payload["outcome"] == "failed"
+    ]
+    assert len(failed) == failures
+    assert all(
+        "SyntaxError" in payload["error"] and "analysis.py:57" in payload["error"]
+        for payload in failed
+    )
+    assert "SECRET_CONTENT" not in str(events) and "fixture-private" not in str(events)
+
+
+def test_attribute_error_is_specific_without_exposing_raw_details():
+    module = adapter_module()
+    assert (
+        module.tool_error_summary(
+            'File "/private/analysis.py", line 23\nAttributeError: SECRET_DETAILS'
+        )
+        == "AttributeError（analysis.py:23）：对象不支持该属性或方法"
+    )
+
+
+@pytest.mark.parametrize(
+    "output, expected",
+    [
+        ("AssertionError\n", "AssertionError：计算校验未通过"),
+        ("ImportError: SECRET_DETAILS", "ImportError：Python导入失败"),
+    ],
+)
+def test_known_python_errors_without_details_are_still_specific(output, expected):
+    assert adapter_module().tool_error_summary(output) == expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("source", [None, str(uuid4())])
 async def test_options_permissions_and_candidate_ack_before_public_events(
     monkeypatch, source

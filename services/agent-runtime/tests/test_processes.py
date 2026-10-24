@@ -81,6 +81,9 @@ if mode == "control_unknown": exchange("candidate.unknown")
 if mode == "early_event": emit(1, "assistant.message", {"text":"before ACK"})
 if mode == "oversized": print("x" * (4 * 1024 * 1024 + 1), flush=True)
 exchange("candidate.created")
+if mode == "reported_failure":
+    emit(1, "agent.failed", {"code":"tool_recovery_limit", "message":"SyntaxError (analysis.py:57)", "retryable":False})
+    sys.exit(1)
 root = pathlib.Path(os.environ["CLAUDE_CONFIG_DIR"])
 if mode == "backend":
     from harness_forge_runtime.settings import RuntimeSettings
@@ -156,17 +159,39 @@ async def manager_fixture(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_worker_failure_reason_survives_parent_exit_validation(
+    tmp_path, monkeypatch
+):
+    module, turn, store, manager = await manager_fixture(tmp_path)
+    fixture_popen(monkeypatch, module, "reported_failure")
+    handle = await manager.start(turn)
+    try:
+        events = [json.loads(line) async for line in manager.stream(handle)]
+        assert events[-1]["type"] == "agent.failed"
+        assert events[-1]["payload"]["code"] == "tool_recovery_limit"
+        assert events[-1]["payload"]["message"] == "SyntaxError (analysis.py:57)"
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["tool_success", "tool_failure"])
-async def test_tool_completion_survives_parent_validation_without_null_optional_fields(tmp_path, monkeypatch, mode):
+async def test_tool_completion_survives_parent_validation_without_null_optional_fields(
+    tmp_path, monkeypatch, mode
+):
     module, turn, store, manager = await manager_fixture(tmp_path)
     fixture_popen(monkeypatch, module, mode)
     handle = await manager.start(turn)
     try:
         events = [json.loads(line) async for line in manager.stream(handle)]
         assert events[-1]["type"] == "agent.completed"
-        started = next(event["payload"] for event in events if event["type"] == "tool.started")
+        started = next(
+            event["payload"] for event in events if event["type"] == "tool.started"
+        )
         assert started["input"] == {"value": None}
-        completed = next(event["payload"] for event in events if event["type"] == "tool.completed")
+        completed = next(
+            event["payload"] for event in events if event["type"] == "tool.completed"
+        )
         field = "output" if mode == "tool_success" else "error"
         assert completed[field] == "synthetic"
         assert ("error" if field == "output" else "output") not in completed

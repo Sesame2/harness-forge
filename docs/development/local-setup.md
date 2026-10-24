@@ -136,11 +136,15 @@ node scripts/openai.mjs smoke --api responses
 
 smoke 每次生成独立项目 `harness-forge-openai-smoke-chat-<随机后缀>` 或 `harness-forge-openai-smoke-responses-<随机后缀>`，启动日志给出本次完整项目名；各自 Web/API/制品/Runtime/Postgres/MinIO/Console 端口依次为 `45173/48080/48081/48090/45432/49000/49001`、`55173/58080/58081/58090/55432/59000/59001`。两模式按顺序运行；同协议并发可能端口冲突而失败，但不会共用项目或清理另一调用的卷。如已有本次项目名的容器、卷或网络，立即拒绝，不自动接管。启动成功、失败或 SIGINT/SIGTERM 都只清理本次拥有的项目及卷；若报告 `HF_OPENAI_CLEANUP_FAILED`，按启动日志中的完整项目名核对归属再手工清理，不删除其他项目。需要已安装 `apps/web` 依赖，入口会显式安装其固定 Playwright Chromium。
 
-真实 smoke 仅使用合成 CSV，单 Run 120 秒、Profile 最大 8 轮、兼容模式单次输出上限 8192 tokens；SDK 的 Anthropic `max_budget_usd` 不是 OpenAI 上游的精确费用上限。网关禁用自动重试/fallback，但固定 Claude CLI 部分连接/流中恢复分支并不受单一 retry 参数控制，因此不承诺整个工作流只有一个 HTTP 请求。失败不会由 launcher 自动重跑，修复后显式复测，禁止无界付费循环。
+真实 smoke 仅使用合成 CSV，单 Run 轮询/取消界限120秒；Geo Profile按用户2026-10-25要求最大50轮，兼容模式单次输出上限8192 tokens。SDK 的 Anthropic `max_budget_usd=2.0` 不是 OpenAI 上游的精确费用上限。网关禁用自动重试/fallback，但固定 Claude CLI 部分连接/流中恢复分支并不受单一 retry 参数控制，因此不承诺整个工作流只有一个 HTTP 请求。失败不会由 launcher 自动重跑，修复后显式复测，禁止无界付费循环。
 
 Responses混合工具历史现采用同版本LiteLLM已有的text-first策略：只在单条assistant消息内先输出全部说明、再输出全部function_call，保留文本/首尾空白、参数、工具ID及结果关联，不跨消息重排。独立窄补丁由原始源hash与zero-fuzz保护，依据见[成熟方案研究](../research/2026-10-24-responses-tool-history-order.md)；不是第二套转换器或通用Claude语义等价保证。
 
-完整smoke明确要求同条回复包含说明和工具，不再通过禁止说明绕开限制；Responses结束前必须在本次网关日志中确认固定 `HF_GATEWAY_MIXED_TOOL_HISTORY` 标记，否则即使报告生成也失败。验收使用简单离线柱图并枚举可能没有扩展名的输入文件，仍检查真实Python计算、ECharts实际绘制和所有三轮/两会话闸门。独立空/纯空白text块会被固定LiteLLM前处理删除，因此提前HTTP400拒绝，安全日志码为 `HF_GATEWAY_EMPTY_TEXT_UNREPRESENTABLE`；含正文首尾空白、system字符串和tool_result.content不在此新增拒绝范围。实际工具返回错误仍按既定不等价边界明确失败，不自动切协议或重试。
+完整smoke明确要求同条回复包含说明和工具，不再通过禁止说明绕开限制；Responses结束前必须在本次网关日志中确认固定 `HF_GATEWAY_MIXED_TOOL_HISTORY` 标记，否则即使报告生成也失败。验收使用简单离线柱图并枚举可能没有扩展名的输入文件，仍检查真实Python计算、ECharts实际绘制和所有三轮/两会话闸门。独立空/纯空白text块会被固定LiteLLM前处理删除，因此提前HTTP400拒绝，安全日志码为 `HF_GATEWAY_EMPTY_TEXT_UNREPRESENTABLE`；含正文首尾空白、system字符串和tool_result.content不在此新增拒绝范围。
+
+2026-10-25起，工具失败结果显式封装为含 `is_error:true` 与原content的JSON文本返回模型，两个上游协议都保留调用关联。每Run最多2个失败结果供修正，第三个以 `tool_recovery_limit` 停止；轮数/预算耗尽分别显示 `agent_turn_limit` / `agent_budget_limit`，未知错误仍脱敏。Web自动展开失败步骤，不展示任意原始异常正文。
+
+Geo Profile已获用户授权获取公开权威数据：仅任务相关公开HTTPS数据，记录来源URL/许可/日期/CRS/精度和原始字节digest；严禁把示意、粗分辨率或缺失数据包装为精细调查。下载在workspace中完成，最终HTML/GeoJSON离线加载，不引入CDN。当前这是Profile提示策略，不是强制出站网络隔离，Bash仍拥有容器原有能力；未增加外部包、凭证或新服务。
 
 无付费验证：`make test-openai` 只用假 HTTP/子进程；`make test-gateway` 才显式启动固定真实网关接本地 mock 上游。无凭证的覆盖文件渲染检查可用下面命令；占位值仅为配置校验服务，不表示可以无凭证调用：
 

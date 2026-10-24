@@ -1,0 +1,23 @@
+--- a/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py
++++ b/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py
+@@ -508,7 +508,8 @@
+                         elif content.get("type") == "tool_result":
++                            from capabilities import tool_result_content
+                             tool_result = ChatCompletionToolMessage(
+                                 role="tool",
+                                 tool_call_id=content.get("tool_use_id", ""),
+-                                content=self._tool_result_content(content.get("content")),
++                                content=self._tool_result_content(tool_result_content(content)),
+                             )
+                             self._add_cache_control_if_applicable(content, tool_result, model)
+--- a/litellm/llms/anthropic/experimental_pass_through/responses_adapters/transformation.py
++++ b/litellm/llms/anthropic/experimental_pass_through/responses_adapters/transformation.py
+@@ -292,6 +292,7 @@
+                         elif btype == "tool_result":
++                            from capabilities import tool_result_content
+                             tool_use_id = block.get("tool_use_id", "")
+-                            inner = block.get("content")
++                            inner = tool_result_content(block)
+                             document_candidates = (
+                                 tuple(
+                                     self._translate_anthropic_document_block_to_file_part(c)

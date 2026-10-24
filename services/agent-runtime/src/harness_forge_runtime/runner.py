@@ -14,7 +14,7 @@ from uuid import UUID
 from pathlib import Path
 
 from harness_forge_runtime.artifacts import validate_artifacts
-from harness_forge_runtime.claude import ClaudeAdapter
+from harness_forge_runtime.claude import ClaudeAdapter, ClaudeAdapterError
 from harness_forge_runtime.models import RunRequest, RuntimeEvent
 from harness_forge_runtime.sessions import SessionStore
 from harness_forge_runtime.settings import RuntimeSettings
@@ -90,15 +90,22 @@ async def run_worker(
                 {"candidate_sdk_session_id": candidate, "artifacts": artifacts},
             )
         return 0
-    except Exception:
+    except Exception as error:
         # Raw SDK exceptions may contain credentials or environment configuration.
         diagnostic.write(f"run={request.run_id} worker_failed\n")
         diagnostic.flush()
+        code, message = "worker_failed", "Worker execution failed"
+        if isinstance(error, ClaudeAdapterError) and error.code in {
+            "tool_recovery_limit",
+            "agent_turn_limit",
+            "agent_budget_limit",
+        }:
+            code, message = error.code, str(error)
         emit(
             "agent.failed",
             {
-                "code": "worker_failed",
-                "message": "Worker execution failed",
+                "code": code,
+                "message": message,
                 "retryable": False,
             },
         )

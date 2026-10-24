@@ -161,7 +161,7 @@ class CapabilityContract(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "^HF_GATEWAY_"):
                         self.validate({**self.request, **mutation}, mode)
 
-    def test_error_tool_result_is_rejected(self):
+    def test_error_tool_result_is_accepted_without_mutating_failure_or_content(self):
         for content in [
             [
                 {
@@ -177,8 +177,20 @@ class CapabilityContract(unittest.TestCase):
                     **self.request,
                     "messages": [{"role": "user", "content": content}],
                 }
-                with self.assertRaisesRegex(ValueError, "^HF_GATEWAY_"):
-                    self.validate(request, "responses")
+                original = copy.deepcopy(request)
+                for mode in ("chat", "responses"):
+                    self.validate(request, mode)
+                self.assertEqual(request, original)
+
+    def test_tool_error_status_must_be_a_boolean(self):
+        for invalid in (None, 0, 1, "true", "false", {}, []):
+            for mode in ("chat", "responses"):
+                with self.subTest(value=invalid, mode=mode):
+                    request = {**self.request, "messages": [{"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "call-1", "content": "failed", "is_error": invalid}
+                    ]}]}
+                    with self.assertRaisesRegex(ValueError, "^HF_GATEWAY_"):
+                        self.validate(request, mode)
 
     def test_approved_mixed_block_normalization_keeps_original_request_untouched(self):
         request = {**self.request, "messages": [
