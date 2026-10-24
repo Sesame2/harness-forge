@@ -42,6 +42,13 @@
 
 本机Compose项目 `harness-forge-openai`，Docker Provider、真实OpenAI Chat，模型仅记录hash `7d963f65d1ed`；Web5173、Go8080/8081、Runtime8090、PG5432、MinIO9000/9001均仅绑定127.0.0.1，网关4000不发布。所有旧数据保留，不得down-v。旧Fake项目已停止，其4个数据卷保留；不动其它历史项目。
 
-真实 `.env` 仅主目录 `/Users/mei/Desktop/Project/harness-forge/.env`，600、忽略、未跟踪；不复制或输出。恢复时先查Git与未finalize Run；无在途Run才更新服务，不自动重发付费任务。已核对运行容器与实施源码的Profile/提示/Runtime SHA256完全一致，并验证Docker Provider、openai-chat及Runtime没有OPENAI_API_KEY。主分支/远端同步状态将在交付确认段记录；所有已批准功能及本机验收已完成，不自动重做历史任务或调用收费smoke。
+真实 `.env` 仅主目录 `/Users/mei/Desktop/Project/harness-forge/.env`，600、忽略、未跟踪；不复制或输出。恢复时先查Git与未finalize Run；无在途Run才更新服务，不自动重发付费任务。已核对运行容器与实施源码的Profile/提示/Runtime SHA256完全一致，并验证Docker Provider、openai-chat及Runtime没有OPENAI_API_KEY。所有已批准功能及本机验收已完成，不自动重做历史任务或调用收费smoke。
 
 测试入口：<http://localhost:5173/projects/5f0db005-9abe-4cde-a03d-7ce3893b13d8/conversations/6f3fbb9b-5f5b-40ef-92b9-c5574ae81209>。普通提问成功会话为同Project下 `6b3b9cb5-042a-4e6d-aa77-b7dfa6d344ac`。当前进程来自实施树构建的镜像，不绑定Web/Runtime源码；快进main不需要中断或再跑模型，后续可在main用同一 `harness-forge-openai` 开发项目启动。
+
+## 交付确认与下次恢复
+
+- Task29–31全部完成。验收实现冻结为 `166e977f8d71bbb972d4c4ba5241482bf381cee6`，已快进主目录main并push；`git ls-remote origin refs/heads/main`核对同一SHA，主目录及实施树当时均干净。随后的提交仅完成本段和计划checkbox，不改变已验收实现；最新交付SHA以Git main/远端为准。
+- 提交前25个staged文件检查通过；实际key/上游URL/模型原值4项扫描无泄漏，`.env`没有入库。临时integration/e2e/网关合同资源清理，不删除保留开发卷或其它历史项目。保留环境6个运行服务全部healthy、仅本机绑定，最后检查无未finalize Run。
+- 下次说“继续”时先读本页、查看Git/运行状态，再承接新需求；不要重跑本页历史任务或自动调用付费模型。50轮只决定总轮数上限，第三次工具失败仍会停止；普通自然提问和此数据范围内的三亚近海概览已实测，但不是保证任意模型代码或任意地理分析都成功。
+- 未测/不在范围：新增功能独立云CI、原生真实Claude、当前错误封装的Responses付费自然任务、无缓存fresh clone、精细完整三亚水系、强制网络防火墙、E2B实现和多租户认证。旧双协议真实验收、当前双协议HTTP合同与本次Chat自然任务必须分开表述，不互相冒充。
